@@ -4,6 +4,112 @@
 % \PassOptionsToPackage{numbers, compress}{natbib}
 % before loading nips_2017
 %
+% to avoid loading the natbib package, add option 
+% \usepackage[nonatbib]{nips_2017}
+
+\usepackage[square,numbers]{natbib}
+\bibliographystyle{unsrtnat}
+
+\usepackage{nips_2017}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+% \usepackage[final]{nips_2017}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+
+\title{Investigation of Long Short-Term Memory Networks Implementation in cuDNN}
+
+% The \author macro works with any number of authors. There are two
+% commands used to separate the names and addresses of multiple
+% authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to
+% break the lines. Using \AND forces a line break at that point. So,
+% if LaTeX puts 3 of 4 authors names on the first line, and the last
+% on the second line, try using \AND instead of \And before the third
+% author name.
+
+\author{
+  Li Gu \\
+  University of Toronto \\
+  Toronto, Canada \\
+  \texttt{li.gu@mail.utoronto.ca} \\
+  \And
+  Shuo Niu \\
+  University of Toronto \\
+  Toronto, Canada \\
+  \texttt{shuo.niu@mail.utoronto.ca} \\
+  \And
+  Yang Fang \\
+  University of Toronto \\
+  Toronto, Canada \\
+  \texttt{jake.fang@mail.utoronto.ca} \\
+  %% examples of more authors
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \AND
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+}
+
+\begin{document}
+% \nipsfinalcopy is no longer used
+
+\maketitle
+\begin{abstract}
+  In this project, we are going to implement long short-term memory networks in CUDA 
+  and investigate both the computation efficiency and memory efficiency of the networks.
+\end{abstract}
+
+\section{Introduction}
+
+Deep neural networks (DNNs) are the state-of-art solutions to many artificial intelligence problems such as computer vision and natural language processing. At the same time powerful Graphics Processing Units(GPUs) becomes the first choice of hardware to provide acceleration for those DNNs which comes with high computation complexity and significant energy consumption.
+
+The two major forms of the networks are Feed-forward Neural Networks whose information is only fed forward to the next layer and Recurrent Neural Networks (RNNs) whose units in each layer form a directed graph along the sequence to form the internal memory and process sequence of inputs. Much more attention have been given to optimizing the implementation of feed-forward networks on GPUs particularly in the case of Convolutional Neural Networks (CNNs)\cite{lavin2016fast, vasilache2014fast, li2016optimizing}. As far as we know, there are a few studies on the hardware acceleration of RNNs\cite{appleyard2016optimizing}.
+
+One drawback of RNNs is that it cannot recognize the pattern of a sequence of inputs if there is a large gap between two related inputs. Long Short-Term Memory networks (LSTMs)\cite{hochreiter1997long} is a special kind of RNNs which was introduced to address the problem of learning long-term dependencies.
+
+Nvidia introduces the highly optimized cuDNN library\cite{chetlur2014cudnn} in 2014 and brought the support for Simple RNN, GRU, and LSTM architectures in the release of the fifth version in 2016. We would like to implement their unveiled approaches to accelerate a standard LSTM networks and search for the general portable efficient methods for accelerating different forms of RNNs architectures which would be beneficial when implementing and deploying a newly invented RNNs architecture on different GPUs. After investigation of the computation efficiency, we would turn into the memory efficiency of the network which has been significantly overlooked.
+
+\section{Related work}
+
+\section{Methods}
+
+At the beginning of our project, we will implement the LSTMs which was unveiled in the fifth version of cuDNN. Once we have our own CUDA version of optimized LSTM, we will benchmark it using Baidu DeepBench\cite{DeepBench}, against cuDNN and PyTorch\cite{PyTorch}.
+
+\medskip
+
+\bibliography{references}
+
+\end{document}
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+% \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading nips_2017
+%
 % to avoid loading the natbib package, add option nonatbib:
 % \usepackage[nonatbib]{nips_2017}
 
