@@ -86,13 +86,33 @@
 
 \section{Introduction}
 
-Deep neural networks (DNNs) are the state-of-art solutions to many artificial intelligence problems such as computer vision and natural language processing. At the same time powerful Graphics Processing Units(GPUs) becomes the first choice of hardware to provide acceleration for those DNNs which comes with high computation complexity and significant energy consumption.
+% Deep neural networks (DNNs) are the state-of-art solutions to many artificial intelligence problems such as computer vision and natural language processing. At the same time powerful Graphics Processing Units(GPUs) becomes the first choice of hardware to provide acceleration for those DNNs which comes with high computation complexity and significant energy consumption.
 
-The two major forms of the networks are Feed-forward Neural Networks whose information is only fed forward to the next layer and Recurrent Neural Networks (RNNs) whose units in each layer form a directed graph along the sequence to form the internal memory and process sequence of inputs. Much more attention have been given to optimizing the implementation of feed-forward networks on GPUs particularly in the case of Convolutional Neural Networks (CNNs)\cite{lavin2016fast, vasilache2014fast, li2016optimizing}. As far as we know, there are a few studies on the hardware acceleration of RNNs\cite{appleyard2016optimizing}.
+% The two major forms of the networks are Feed-forward Neural Networks whose information is only fed forward to the next layer and Recurrent Neural Networks (RNNs) whose units in each layer form a directed graph along the sequence to form the internal memory and process sequence of inputs. Much more attention have been given to optimizing the implementation of feed-forward networks on GPUs particularly in the case of Convolutional Neural Networks (CNNs)\cite{lavin2016fast, vasilache2014fast, li2016optimizing}. As far as we know, there are a few studies on the hardware acceleration of RNNs\cite{appleyard2016optimizing}.
 
-One drawback of RNNs is that it cannot recognize the pattern of a sequence of inputs if there is a large gap between two related inputs. Long Short-Term Memory networks (LSTMs)\cite{hochreiter1997long} is a special kind of RNNs which was introduced to address the problem of learning long-term dependencies.
+% One drawback of RNNs is that it cannot recognize the pattern of a sequence of inputs if there is a large gap between two related inputs. Long Short-Term Memory networks (LSTMs)\cite{hochreiter1997long} is a special kind of RNNs which was introduced to address the problem of learning long-term dependencies.
 
-Nvidia introduces the highly optimized cuDNN library\cite{chetlur2014cudnn} in 2014 and brought the support for Simple RNN, GRU, and LSTM architectures in the release of the fifth version in 2016. We would like to implement their unveiled approaches to accelerate a standard LSTM networks and search for the general portable efficient methods for accelerating different forms of RNNs architectures which would be beneficial when implementing and deploying a newly invented RNNs architecture on different GPUs. After investigation of the computation efficiency, we would turn into the memory efficiency of the network which has been significantly overlooked.
+
+
+%%%%%%  Background %%%%%%%%
+
+Recurrent Neural Networks (RNNs) are the state-of-art approaches for a large number of sequence tasks, including sequence generation\cite{eck2002first,sutskever2014sequence,gravessupervised}, machine translation \cite{cho2014learning,jean2015montreal,luong2015effective}, speech recognition \cite{graves2013speech}. LSTM \cite{hochreiter1997long}, an special RNN architecture, can avoid the issue of vanishing gradient \cite{pascanu2013difficulty} in deeper network and thus be more capable of learning long-term dependencies. A key factor in these recent success has come from the GPUs acceleration \cite{leonard2015rnn,weninger2015introducing} and Nvidia introduces cuDNN library\cite{chetlur2014cudnn} with highly-optimized implementation of RNNs\cite{appleyard2016optimizing} 
+
+%%%%% Method in Brief 
+In this project, we hope to learn GPU programming and fundamental optimization techniques in CUDA, and try to get familiar with several mainstream GPU-accelerated library in deep learning, including cuDNN and Torch. Furthemore, we hope to come up with some strategies to further maximize memory throughput for above existing libraries. The whole project will include two parts:
+
+\begin{itemize}
+  \item Firstly, we will implement a naive LSTM in CUDA and work on optimizations from cell level to layer level according to\cite{appleyard2016optimizing}, which is called cuda-LSTM.
+  \item Secondly, inspired by\cite{li2016optimizing}, we will investigate the memory-efficiency among cuda-LSTM, cuda-torch\cite{PyTorch} and cuDNN by analysing the impact of data layout and the off-chip memory access
+
+\end{itemize}
+
+%%%%% Evaluation %%%%%%
+
+To evaluate different optimization strategies, we will have experiments in two different levels: In CUDA level, our implemented optimization strategies will be evaluated with DeepBench\cite{DeepBench}; In application level, we will integrated our custom cuda-LSTM library into Pytorch and evaluate training and inference time in some sequence-to-sequence tasks, such as Neural Machine Translation\cite{luong2015effective}.
+
+
+% Nvidia introduces the highly optimized cuDNN library\cite{chetlur2014cudnn} in 2014 and brought the support for Simple RNN, GRU, and LSTM architectures in the release of the fifth version in 2016. We would like to implement their unveiled approaches to accelerate a standard LSTM networks and search for the general portable efficient methods for accelerating different forms of RNNs architectures which would be beneficial when implementing and deploying a newly invented RNNs architecture on different GPUs. After investigation of the computation efficiency, we would turn into the memory efficiency of the network which has been significantly overlooked.
 
 \section{Related work}
 
