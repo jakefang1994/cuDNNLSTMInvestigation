@@ -131,6 +131,11 @@ Long Short Term Memory (LSTM) networks are a special kind of RNN, which is intro
 
 \centerline{\includegraphics[width=2.1in]{lstm_formulas.png}}
 
+\textbf{Reduce Memory Consumption} \\
+ The trend for deep learning model is to have a “deeper and wider” architecture, which brings the gap between limited GPU device memory capacity and increasing model complexity. Thus, memory optimization becomes a more popular topic in deep learning community. In\cite{chen2015mxnet}, by analysing the data dependencies between operations in a network and allocating the same memory to operations in a network that do not use it concurrently, the memory can be reused.  \cite{gruslys2016memory} exploits dynamic programming to balance a trade-off between caching of intermediate results and recomputation in RNN. In cuda level, \cite{diamos2016persistent} applies the on-chip memory on the GPU to cache the shared RNN parameters during training and optimized barrier implementation in assembly level to reduce the cost of inter-processor synchronization and hide latency, which obtains 16x reduction in memory of activations. \cite{mengtraining} utilizes host memory as a bigger memory pool to overcome the limitation of GPU memory and further proposes a memory-efficient additive attention layer\cite{bahdanau2014neural} for sequence tasks. However, the optimization of memory efficiency, especially how to maximize memory throughput is overlooked. 
+
+
+
 Baidu DeepBench\cite{DeepBench} is one benchmark that we can use to evaluate our CUDA code on operation-level, particularly dense matrix multiplies, convolutions, and RNN. The metrics it uses are computation time and TeraFLOPS. 
 PyTorch\cite{PyTorch} is a deep learning framework initially released in October 2016, which provides strong GPU acceleration for tensor computation. 
 By employing DeepBench, we will benchmarking our CUDA code against underlying neural network libraries such as cuDNN, and PyTorch CUDA, in metrics time and TFLOPS.
@@ -141,6 +146,7 @@ By employing DeepBench, we will benchmarking our CUDA code against underlying ne
 At the beginning of our project, we will implement the optimization to LSTM which was realized in cuDNN 5\cite{appleyard2016optimizing}. The idea is that the more parallelism we give to GPUs, the higher performance they can achieve. There are three stages of optimization: on single cell, on single layer, and on multiple layers. For single cell, if a number of matrix multiplications share the same input, they can be combined into a larger matrix multiplication. Furthermore, different matrix multiplications can be computed concurrently using CUDA streams. And in addition, point-wise operations that are in separate kernels can be fused into one single kernel to reduce data transfers and cost of launching a kernel. As for single layer, the weight matrix used for this layer can be pre-transposed before doing any operation, and inputs for multiple time steps can be combined to produce a larger matrix. With regards to multiple layers, as iteration n of a given layer only depends on iteration (n-1) of the same layer and iteration n of the previous layer, it is possible to concurrently perform operations on many layers.
 
 \medskip
+
 
 \bibliography{references}
 
