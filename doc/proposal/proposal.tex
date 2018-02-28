@@ -24,6 +24,7 @@
 \usepackage{nicefrac}       % compact symbols for 1/2, etc.
 \usepackage{microtype}      % microtypography
 \usepackage{graphicx}
+\usepackage{mathtools}
 
 \title{Investigation of Long Short-Term Memory Networks Implementation in cuDNN}
 
@@ -96,14 +97,14 @@
 
 %%%%%%  Background %%%%%%%%
 
-Recurrent Neural Networks (RNNs) are the state-of-art approaches for a large number of sequence tasks, including sequence generation\cite{eck2002first,sutskever2014sequence,gravessupervised}, machine translation \cite{cho2014learning,jean2015montreal,luong2015effective}, speech recognition \cite{graves2013speech}. LSTM \cite{hochreiter1997long}, an special RNN architecture, can avoid the issue of vanishing gradient \cite{pascanu2013difficulty} in deeper network and thus be more capable of learning long-term dependencies. A key factor in these recent success has come from the GPUs acceleration \cite{leonard2015rnn,weninger2015introducing} and Nvidia introduces cuDNN library\cite{chetlur2014cudnn} with highly-optimized implementation of RNNs\cite{appleyard2016optimizing} 
+Recurrent Neural Networks (RNNs) are the state-of-art approaches for a large number of sequence tasks, including sequence generation\cite{eck2002first,sutskever2014sequence,gravessupervised}, machine translation \cite{cho2014learning,jean2015montreal,luong2015effective}, speech recognition \cite{graves2013speech}. LSTM \cite{hochreiter1997long}, an special RNN architecture, can avoid the issue of exploding or vanishing gradient \cite{pascanu2013difficulty} in deeper network and thus be more capable of learning long-term dependencies. A key factor in these recent success has come from the GPUs acceleration \cite{leonard2015rnn,weninger2015introducing} and Nvidia introduces cuDNN library\cite{chetlur2014cudnn} with highly-optimized implementation of RNNs\cite{appleyard2016optimizing} 
 
 %%%%% Method in Brief 
 In this project, we hope to learn GPU programming and fundamental optimization techniques in CUDA, and try to get familiar with several mainstream GPU-accelerated library in deep learning, including cuDNN and Torch. Furthemore, we hope to come up with some strategies to further maximize memory throughput for above existing libraries. The whole project will include two parts:
 
 \begin{itemize}
-  \item Firstly, we will implement a naive LSTM in CUDA and work on optimizations from cell level to layer level according to\cite{appleyard2016optimizing}, which is called cuda-LSTM.
-  \item Secondly, inspired by\cite{li2016optimizing}, we will investigate the memory-efficiency among cuda-LSTM, cuda-torch\cite{PyTorch} and cuDNN by analysing the impact of data layout and the off-chip memory access
+  \item Firstly, we will implement a naive LSTM in CUDA and work on optimizations from cell level to layer level according to\cite{appleyard2016optimizing}, which is called CUDA-LSTM.
+  \item Secondly, inspired by\cite{li2016optimizing}, we will investigate the memory-efficiency among CUDA-LSTM, CUDA-Torch\cite{PyTorch} and cuDNN by analysing the impact of data layout and the off-chip memory access
 
 \end{itemize}
 
@@ -116,26 +117,38 @@ To evaluate different optimization strategies, we will have experiments in two d
 
 \section{Related work}
 
-Recurrent neural networks (RNN) address the problem of recognizing patterns in sequences of data, such as text and speaking, in the way of looping the same neural network for each sequential input. However, if the input sequence is long, there could be a large gap between the current input and the previous important context. In that case, because inputs along the time steps relate to each other via multiplication, derivatives of the previous input are susceptible to become zero (called vanishing gradient) or infinity (called exploding gradient). 
+Recurrent neural networks (RNN) address the problem of recognizing patterns in sequences of data, in the way of looping the same neural network for each sequential input. Inputs along the time sequence relate to each other via multiplication, therefore, derivatives of previous inputs are susceptible to become zero (called vanishing gradient) or infinity (called exploding gradient) in a long input sequence. 
 
-Long Short Term Memory (LSTM) networks are a special kind of RNN, which is introduced to address the problem of learning long-term dependencies. LSTM cells in serial pass a hidden state, and there are four neural network layers in one LSTM cell which decides what information to be forgotten from, added in, or output from the hidden state.
-\vspace{10pt}
+Long Short Term Memory (LSTM)\cite{hochreiter1997long} networks are a special kind of RNN to address the problem of exploding or vanishing gradient when learning long-term dependencies. LSTM cells pass a hidden state in sequence and use four neural network layers to decides what information to be forgotten from, added in, or output from the hidden state.
 
-\centerline{\includegraphics[width=5in]{rnn.png}}
-\centerline{\textbf{Recurrent Neural Networks}}
-\vspace{10pt}
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{rnn}
+\caption{An unrolled recurrent neural network\cite{understandLSTM}}
+\end{figure}
 
-\centerline{\includegraphics[width=5in]{lstm.png}}
-\centerline{\textbf{The repeating module in an LSTM cell}}
-\vspace{10pt}
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{lstm}
+\caption{The repeating module in an LSTM contains four interacting layers\cite{understandLSTM}}
+\end{figure}
 
-\centerline{\includegraphics[width=2.1in]{lstm_formulas.png}}
-
+Steps of updating hidden state and calculating output in an LSTM cell:
+\begin{equation}
+  \begin{split}
+    & f_t=\sigma(W_f\cdot [h_{t-1},x_t]+b_f) \\
+    & i_t=\sigma(W_i\cdot [h_{t-1},x_t]+b_i) \\
+    & \widetilde{C}_t=\tanh(W_C\cdot [h_{t-1},x_t]+b_C) \\
+    & C_t=f_t * C_{t-1}+i_t * \widetilde{C}_t \\
+    & o_t=\sigma(W_o\cdot [h_{t-1},x_t]+b_o \\
+    & h_t=o_t * \tanh(C_t) \\
+  \end{split}
+\end{equation}
 
 %%%%% Speed Up %%%%%%%%%%%%%%%%%%%
 
-%% summary of cudnn5 (Shuo Nie)
-
+%% summary of cudnn5
+cuDNN\cite{chetlur2014cudnn} is the first library of efficient implementations of deep learning primitives which was introduced by Nvidia in 2014. It is easy to integrate into existing frameworks and provides optimized performance and memory usage.
 
 %% summary in application level 
 In algorithm level, exploring alternative architectures to sequence tasks for reducing temporal dependencies and taking the advantage of the parallelism on GPUs have received significant attention recently\cite{chang2017dilated, kaiser2016can, kaiser2015neural, gehring2016convolutional, gehring2017convolutional, kalchbrenner2016neural}. 
@@ -159,12 +172,17 @@ In SRU\cite{lei2017training}, the majority of computation for each step is indep
 %%%%% Benchmark
 Baidu DeepBench\cite{DeepBench} is one benchmark that we can use to evaluate our CUDA code on operation-level, particularly dense matrix multiplies, convolutions, and RNN. The metrics it uses are computation time and TeraFLOPS. 
 PyTorch\cite{PyTorch} is a deep learning framework initially released in October 2016, which provides strong GPU acceleration for tensor computation. 
-By employing DeepBench, we will benchmarking our CUDA code against underlying neural network libraries such as cuDNN, and PyTorch CUDA, in metrics time and TFLOPS.
-
+By employing DeepBench, we will benchmarking our CUDA code against underlying neural network libraries such as cuDNN, and CUDA-Torch, in metrics of time and TFLOPS.
 
 \section{Methods}
 
 At the beginning of our project, we will implement the optimization to LSTM which was realized in cuDNN 5\cite{appleyard2016optimizing}. The idea is that the more parallelism we give to GPUs, the higher performance they can achieve. There are three stages of optimization: on single cell, on single layer, and on multiple layers. For single cell, if a number of matrix multiplications share the same input, they can be combined into a larger matrix multiplication. Furthermore, different matrix multiplications can be computed concurrently using CUDA streams. And in addition, point-wise operations that are in separate kernels can be fused into one single kernel to reduce data transfers and cost of launching a kernel. As for single layer, the weight matrix used for this layer can be pre-transposed before doing any operation, and inputs for multiple time steps can be combined to produce a larger matrix. With regards to multiple layers, as iteration n of a given layer only depends on iteration (n-1) of the same layer and iteration n of the previous layer, it is possible to concurrently perform operations on many layers.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{layers}
+\caption{As dependencies are resolved a wavefront of operations moves through the network\cite{optimizingRNN}}
+\end{figure}
 
 \medskip
 
