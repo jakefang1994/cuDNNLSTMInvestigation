@@ -131,14 +131,32 @@ Long Short Term Memory (LSTM) networks are a special kind of RNN, which is intro
 
 \centerline{\includegraphics[width=2.1in]{lstm_formulas.png}}
 
+
+%%%%% Speed Up %%%%%%%%%%%%%%%%%%%
+
+%% summary of cudnn5 (Shuo Nie)
+
+
+%% summary in application level 
+In algorithm level, exploring alternative architectures to sequence tasks for reducing temporal dependencies and taking the advantage of the parallelism on GPUs have received significant attention recently\cite{chang2017dilated, kaiser2016can, kaiser2015neural, gehring2016convolutional, gehring2017convolutional, kalchbrenner2016neural}. 
+\cite{Balduzzi:2016:SRN:3045390.3045527} proposed a recurrent unit with only element-wise linear recurrence relations????, which can achieve similar performance to standard non-linear RNNs on text generation.
+\cite{bradbury2016quasi} Quasi-RNN has incorporated word-level convolutions into recurrent unit with sequential gated pooling. 
+In SRU\cite{lei2017training}, the majority of computation for each step is independent of the recurrence and thus can be easily parallelized, which makes its training as fast as a convolutional layer and 5-10x faster than an optimized LSTM implementation. 
+\cite{martin2017parallelizing}abstracts above parallel linear recurrence algorithms and provides an implementation as a CUDA kernel.
+
+
+
+
+
+
+%%%%%% Memory usage %%%%%%%%%%%%%%%%%
 \textbf{Reduce Memory Consumption} \\
  The trend for deep learning model is to have a “deeper and wider” architecture, which brings the gap between limited GPU device memory capacity and increasing model complexity. Thus, memory optimization becomes a more popular topic in deep learning community. In\cite{chen2015mxnet}, by analysing the data dependencies between operations in a network and allocating the same memory to operations in a network that do not use it concurrently, the memory can be reused.  \cite{gruslys2016memory} exploits dynamic programming to balance a trade-off between caching of intermediate results and recomputation in RNN. In cuda level, \cite{diamos2016persistent} applies the on-chip memory on the GPU to cache the shared RNN parameters during training and optimized barrier implementation in assembly level to reduce the cost of inter-processor synchronization and hide latency, which obtains 16x reduction in memory of activations. \cite{mengtraining} utilizes host memory as a bigger memory pool to overcome the limitation of GPU memory and further proposes a memory-efficient additive attention layer\cite{bahdanau2014neural} for sequence tasks. However, the optimization of memory efficiency, especially how to maximize memory throughput is overlooked. 
 
- Our project in 2nd part is closely related to recent work about optimization memory efficiency on CNN[1]. As the first study to look into the memory efficiency of accelerating CNN on GPUs, \cite{li2016optimizing} firstly unveiled the impact of data layouts on different types of CNN layers and compare their performance among Alex’s cuda-convnet, Caffe and cuDNN. Then, they investigate the internal memory access patterns of the memory-bound layers (pooling and softmax layers) and propose effective optimizations to substantially reduce their off-chip memory requests and internal-kernel communication. Inspired by this work, our project will investigate the memory efficiency of accelerating RNN on GPUs
+ %%%% Our job
+ Our project in second part is closely related to recent work about optimization memory efficiency on CNN\cite{li2016optimizing}. As the first study to look into the memory efficiency of accelerating CNN on GPUs, they firstly unveiled the impact of data layouts on different types of CNN layers and compare their performance among Alex’s cuda-convnet, Caffe and cuDNN. Then, they investigate the internal memory access patterns of the memory-bound layers (pooling and softmax layers) and propose effective optimizations to substantially reduce their off-chip memory requests and internal-kernel communication. Inspired by this work, our project will investigate the memory efficiency of accelerating RNN on GPUs
 
-
-
-
+%%%%% Benchmark
 Baidu DeepBench\cite{DeepBench} is one benchmark that we can use to evaluate our CUDA code on operation-level, particularly dense matrix multiplies, convolutions, and RNN. The metrics it uses are computation time and TeraFLOPS. 
 PyTorch\cite{PyTorch} is a deep learning framework initially released in October 2016, which provides strong GPU acceleration for tensor computation. 
 By employing DeepBench, we will benchmarking our CUDA code against underlying neural network libraries such as cuDNN, and PyTorch CUDA, in metrics time and TFLOPS.
