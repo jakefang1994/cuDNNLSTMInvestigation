@@ -144,6 +144,7 @@ int LSTM_elementwise_unfused( int hiddenSize,
 
    // NS: check my draw on paper page 2
    // NS: x(t) = x(t) + h(t-1)
+   // NS: repeat 4 times, as placeholders for 4 gates
    for (int i = 0; i < 4; i++) {
       if (tmp_h != NULL) {
          pw_vecAdd <<< gridDim, blockDim, 0, stream >>> (tmp_i + i * numElements, tmp_i  + i * numElements, tmp_h  + i * numElements, numElements);
@@ -163,6 +164,7 @@ int LSTM_elementwise_unfused( int hiddenSize,
    }   
    
    // NS: check my draw on paper page 2 (f(t) and i(t) swapped here)
+   // NS: four gate-vectors are stored in tmp_i sequencially, len(tmp_i) = 4 * numElements
    // NS: i(t) = sigmoid(x(t))
    pw_sigmoid <<< gridDim, blockDim, 0, stream >>> (tmp_i + 0 * numElements, tmp_i + 0 * numElements, numElements);
    cudaErrCheck(cudaGetLastError());
@@ -225,46 +227,53 @@ int LSTM_elementwise_unfused( int hiddenSize,
 //=========================================================================================
 // Fused forward kernel
 __global__ void elementWise_fp(int hiddenSize, int miniBatch,
-                               float *tmp_h, 
-                               float *tmp_i, 
+                               float *tmp_h,    // NS: h(t-1)
+                               float *tmp_i,    // NS: x(t)
                                float *bias,
                                float *linearGates,
-                               float *h_out,
-                               float *i_out,
-                               float *c_in,
-                               float *c_out,
+                               float *h_out,    // NS: h(t)
+                               float *i_out,    // NS: === h(t)
+                               float *c_in,     // NS: c(t-1)
+                               float *c_out,    // NS: c(t)
                                bool training) {
    int index = blockIdx.x * blockDim.x + threadIdx.x;
    int numElements = miniBatch * hiddenSize;
    
-   if (index >= numElements) return;
+   if (index >= numElements) return;    // NS: number of kernels === numElements
    
-   int batch = index / hiddenSize;
-   int gateIndex = (index % hiddenSize) + 4 * batch * hiddenSize;   
+   int batch = index / hiddenSize; // NS: which mini-batch this is in
+   // NS: find the corresponding gateindex (in tmp_i) of this element
+   // NS: gateIndex = index of element in current mini-batch + 4 * num of elements in previous batches
+   int gateIndex = (index % hiddenSize) + 4 * batch * hiddenSize;
    
    float g[4];
 
-   for (int i = 0; i < 4; i++) {
+   for (int i = 0; i < 4; i++) {        // NS: pointwise g[i] was stored on tmp_i or tmp_h discretely, in interval of 'hiddenSize'
+      // NS: g = x(t) + h(t-1)
       g[i] = tmp_i[i * hiddenSize + gateIndex] + tmp_h[i * hiddenSize + gateIndex];
+      // NS: g += bias
       g[i] += bias[i * hiddenSize + index % hiddenSize] + bias[(i + 4) * hiddenSize + index % hiddenSize];
       
-      if (training) linearGates[gateIndex + i * hiddenSize] = g[i];
+      if (training) linearGates[gateIndex + i * hiddenSize] = g[i];     // NS: never use it, why? how to train?
    }   
    
-   
+   // NS: assign addresses and do activation function for 4 gates
    float in_gate     = sigmoidf(g[0]);
    float forget_gate = sigmoidf(g[1]);
    float in_gate2    = tanhf(g[2]);
    float out_gate    = sigmoidf(g[3]);
    
+   // NS: calculate elementwisely
+   // NS: c(t) = c(t-1) * f(t) + i(t) * c(t)'
    float val = (forget_gate * c_in[index]) + (in_gate * in_gate2);
    
-   c_out[index] = val;
+   c_out[index] = val;  // NS: store elementwise c(t)
    
+   // NS: h(t) = o(t) * tanh(c(t))
    val = out_gate * tanhf(val);                                   
 
-   h_out[index] = val;
-   i_out[index] = val;
+   h_out[index] = val;  // NS: store elementwise h(t)
+   i_out[index] = val;  // NS: what's this? why === h(t)?
 }
 
 //=========================================================================================
