@@ -5,11 +5,11 @@
 #define TRAINING (false)
 
 #define GROUP_GEMM 1
-#define USE_GEMM_STREAMS 1
+#define USE_GEMM_STREAMS 0
 #define FUSE_PW 1
-#define PRE_TRANSPOSE 0
-#define RECUR_BATCH_SIZE 1
-#define USE_LAYERS_STREAMS 0
+#define PRE_TRANSPOSE 1
+#define RECUR_BATCH_SIZE 2
+#define USE_LAYERS_STREAMS 1
 
 // Define some error checking macros.
 #define cudaErrCheck(stat) { cudaErrCheck_((stat), __FILE__, __LINE__); }
@@ -280,19 +280,69 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
   
     // LSTM
 
-    const cublasOperation_t a_trans = CUBLAS_OP_T; // no pre-transpose for now, do optimization 4 here later
+    const cublasOperation_t a_trans = (PRE_TRANSPOSE && (seqLength > 1)) ? CUBLAS_OP_N : CUBLAS_OP_T;
     const cublasOperation_t b_trans = CUBLAS_OP_N; // always N
     
+    // cublasSgemm(): C = alpha * (A + B) + beta * C 
+    float alpha = 1.f;
+    float beta  = 0.f; 
+           
     if (a_trans == CUBLAS_OP_N) {        
-        // do optimization 4 here, transpose A     
+        // do optimization 4 here, transpose A
+        for (int layer = 0; layer <numLayers; layer++) {
+
+            // determine whether using same streams among layers
+            cudaStream_t stream_x_this_layer, stream_h_this_layer;
+            if (USE_GEMM_STREAMS) {
+                stream_x_this_layer = stream_x_single;
+                stream_h_this_layer = stream_h_single;
+            }
+            else {
+                stream_x_this_layer = stream_x[layer];
+                stream_h_this_layer = stream_h[layer];
+            }
+
+            // for x(t)
+            float *W_weight_in = weight + layer * hiddenSize * hiddenSize * 8;
+            float *W_weight_out = weight_T + layer * hiddenSize * hiddenSize * 8;
+
+            // for h(t-1)
+            float *R_weight_in = weight + layer * hiddenSize * hiddenSize * 8 + hiddenSize * hiddenSize * 4;
+            float *R_weight_out = weight_T + layer *hiddenSize * hiddenSize * 8 + hiddenSize * hiddenSize * 4;
+
+            cublasErrCheck(cublasSetStream(handle, stream_x_this_layer));
+            cublasErrCheck(cublasSgeam(handle, CUBLAS_OP_T, // trans A
+                                        CUBLAS_OP_N, // trans B
+                                        4 * hiddenSize, // #rows in A & C
+                                        hiddenSize, // #cols in B & C
+                                        &alpha, // scale A
+                                        W_weight_in, // A
+                                        hiddenSize, // leading dim in A
+                                        &beta, // scale B
+                                        NULL, // B
+                                        4 * hiddenSize, // leading dim in B
+                                        W_weight_out, // C
+                                        4 * hiddenSize)); // leading dim in C
+            
+            cublasErrCheck(cublasSetStream(handle, stream_h_this_layer));
+            cublasErrCheck(cublasSgeam(handle, CUBLAS_OP_T, // trans A
+                                        CUBLAS_OP_N, // trans B
+                                        4 * hiddenSize, // #rows in A & C
+                                        hiddenSize, // #cols in B & C
+                                        &alpha, // scale A
+                                        R_weight_in, // A
+                                        hiddenSize, // leading dim in A
+                                        &beta, // scale B
+                                        NULL, // B
+                                        4 * hiddenSize, // leading dim in B
+                                        R_weight_out, // C
+                                        4 * hiddenSize)); // leading dim in C
+        }
     }
     else {
         weight_T = weight;
     }
 
-    // cublasSgemm(): C = alpha * (A + B) + beta * C 
-    float alpha = 1.f;
-    float beta  = 0.f;        
     
     int lStart = 0; // layer starts from
     int lEnd = 0;   // layer ends at
