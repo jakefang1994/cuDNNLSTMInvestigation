@@ -4,11 +4,12 @@
 
 #define TRAINING (false)
 
-#define GROUP_GEMM 0
-#define USE_STREAMS 0
-#define FUSE_PW 0
+#define GROUP_GEMM 1
+#define USE_GEMM_STREAMS 1
+#define FUSE_PW 1
 #define PRE_TRANSPOSE 0
 #define RECUR_BATCH_SIZE 1
+#define USE_LAYERS_STREAMS 0
 
 // Define some error checking macros.
 #define cudaErrCheck(stat) { cudaErrCheck_((stat), __FILE__, __LINE__); }
@@ -74,8 +75,7 @@ int LSTM_unit_unfused(int hiddenSize,
                             float * __restrict__ c_in, // c(t-1)
                             float * __restrict__ c_out,// c(t)
                             cudaStream_t stream) {
-    dim3 blockDim;
-    dim3 gridDim;
+    dim3 blockDim, gridDim;
     
     int numElements = hiddenSize * miniBatch;
     
@@ -149,6 +149,48 @@ int LSTM_unit_unfused(int hiddenSize,
     return 0;
 }
 
+__global__ void LSTM_unit_fused(int hiddenSize,
+                                int miniBatch,
+                                float * __restrict__ h_in,
+                                float * __restrict__ x_in,
+                                float * __restrict__ bias,
+                                float * __restrict__ linearGates,
+                                float * __restrict__ h_out,
+                                float * __restrict__ c_in,
+                                float * __restrict__ c_out,
+                                bool training) {
+    
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int numElements = miniBatch * hiddenSize;
+
+    if (index >= numElements) return;
+
+    int currentBatch = index / hiddenSize;
+    int gateIndex = (index % hiddenSize) + 4 * currentBatch * hiddenSize;
+
+    float gate[4];
+
+    for (int i = 0; i < 4; i++) {
+        gate[i] = x_in[i * hiddenSize + gateIndex] + h_in[i * hiddenSize + gateIndex];
+        gate[i] += bias[i * hiddenSize + index % hiddenSize] + bias[(i + 4) * hiddenSize + index % hiddenSize];
+
+        if (training) linearGates[gateIndex + i * hiddenSize] = gate[i];
+    }
+
+    float in_gate = sigmoidf(gate[0]);
+    float forget_gate = sigmoidf(gate[1]);
+    float in_gate2 = tanhf(gate[2]);
+    float out_gate = sigmoidf(gate[3]);
+
+    float value = (c_in[index] * forget_gate) + (in_gate * in_gate2);
+
+    c_out[index] = value;
+
+    value = out_gate * tanhf(value);
+
+    h_out[index] = value;
+}
+
 
 float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool checkF) {
     int numElements = hiddenSize * miniBatch;
@@ -176,19 +218,30 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
         cudaErrCheck(cudaMalloc((void**)&linearGates, 4 * seqLength * numLayers * numElements * sizeof(float)));
     }
     
-    // all use default NULL stream for now
+    // operation wise streams for optimization 2
+    cudaStream_t stream_x_single, stream_h_single;
+
+    // (operation + layer) wise streams for optimization 6
     cudaStream_t *stream_x, *stream_h;
     stream_x = (cudaStream_t*)malloc(numLayers * sizeof(cudaStream_t));
     stream_h = (cudaStream_t*)malloc(numLayers * sizeof(cudaStream_t));
 
-    for (int i = 0; i < numLayers; i++) {
-        if (USE_STREAMS) {
-          // optimization 2 uses different streams for x and h
-          // optimization 6 uses different streams for various layers
-        }
-        else {
-            stream_x[i] = NULL;  
-            stream_h[i] = NULL;  
+    if (USE_GEMM_STREAMS) {
+        // optimization 2 uses different streams for x and h
+        cudaErrCheck(cudaStreamCreate(&stream_x_single));
+        cudaErrCheck(cudaStreamCreateWithPriority(&stream_h_single, 0, -1));   
+    }
+    else {
+        for (int i = 0; i < numLayers; i++) {
+            if (USE_LAYERS_STREAMS) {
+                // optimization 6 uses different streams for various layers
+                cudaErrCheck(cudaStreamCreate(&stream_x[i]));
+                cudaErrCheck(cudaStreamCreateWithPriority(&stream_h[i], 0, -1));   
+            }
+            else {
+                stream_x[i] = NULL;  
+                stream_h[i] = NULL;  
+            }
         }
     }
     
@@ -288,13 +341,26 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
         if (tEnd > seqLength) tEnd = seqLength;
         
         // lStart, lEnd always differ 1
-        for (int layer = lStart; layer < lEnd; layer++) {            
-            cublasErrCheck(cublasSetStream(handle, stream_x[layer]));
+        for (int layer = lStart; layer < lEnd; layer++) {
+
+            // determine whether using same streams among layers
+            cudaStream_t stream_x_this_layer, stream_h_this_layer;
+            if (USE_GEMM_STREAMS) {
+                stream_x_this_layer = stream_x_single;
+                stream_h_this_layer = stream_h_single;
+            }
+            else {
+                stream_x_this_layer = stream_x[layer];
+                stream_h_this_layer = stream_h[layer];
+            }
+
+            // do x(t) * W_weight on stream_x[layer]
+            cublasErrCheck(cublasSetStream(handle, stream_x_this_layer));
             
             // tStart, tEnd differ recurBatchSize
             for (int i = tStart; i < tEnd; i++) {
                 if (layer > 0) {
-                    cudaErrCheck(cudaStreamWaitEvent(stream_x[layer], events_h[layer - 1][i], 0));
+                    cudaErrCheck(cudaStreamWaitEvent(stream_x_this_layer, events_h[layer - 1][i], 0));
                     cudaErrCheck(cudaEventDestroy(events_h[layer - 1][i]));
                 }
             }
@@ -338,11 +404,12 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
             
             for (int i = tStart; i < tEnd; i++) {
                 cudaErrCheck(cudaEventCreate(&events_x[layer][i], cudaEventDisableTiming));
-                cudaErrCheck(cudaEventRecord(events_x[layer][i], stream_x[layer]));  
+                cudaErrCheck(cudaEventRecord(events_x[layer][i], stream_x_this_layer));  
             }                
             
             for (int i = tStart; i < tEnd; i++) {
-                cublasErrCheck(cublasSetStream(handle, stream_h[layer]));
+                // do h(t-1) *= [R_weight] on stream_h[layer]
+                cublasErrCheck(cublasSetStream(handle, stream_h_this_layer));
 
                 // h(t-1) *= [R_weight]
                 if (GROUP_GEMM) {
@@ -375,25 +442,41 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
                     }
                 }
 
-                cudaErrCheck(cudaStreamWaitEvent(stream_h[layer], events_x[layer][i], 0));
+                cudaErrCheck(cudaStreamWaitEvent(stream_h_this_layer, events_x[layer][i], 0));
                 cudaErrCheck(cudaEventDestroy(events_x[layer][i]));
 
                 if (FUSE_PW) {
-                    // optimization 3 here
+                    // optimization 3
+                    dim3 blockDim, gridDim;
+
+                    blockDim.x = 256;
+                    gridDim.x = (numElements + blockDim.x - 1) / blockDim.x;
+
+                    LSTM_unit_fused <<< gridDim, blockDim, 0, stream_h_this_layer >>>
+                            (hiddenSize, miniBatch,
+                            h_in + 4 * layer * numElements,
+                            x_in + 4 * i * numElements,
+                            bias + 8 * layer * hiddenSize,
+                            TRAINING ? linearGates + 4 * (i * numElements + layer * seqLength * numElements) : NULL,
+                            h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                            c_data + i * numElements + layer * (seqLength + 1) * numElements,
+                            c_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                            TRAINING);
+                    cudaErrCheck(cudaGetLastError());
                 }
                 else {
                     LSTM_unit_unfused(hiddenSize, miniBatch,
-                              h_in + 4 * layer * numElements, 
-                              x_in + 4 * i * numElements, 
-                              bias + 8 * layer * hiddenSize,
-                              h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
-                              c_data + i * numElements + layer * (seqLength + 1) * numElements,
-                              c_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
-                              stream_h[layer]);
+                            h_in + 4 * layer * numElements, 
+                            x_in + 4 * i * numElements,
+                            bias + 8 * layer * hiddenSize,
+                            h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                            c_data + i * numElements + layer * (seqLength + 1) * numElements,
+                            c_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                            stream_h_this_layer);
                 }
                 if (layer != numLayers - 1) {
                     cudaErrCheck(cudaEventCreate(&events_h[layer][i], cudaEventDisableTiming));
-                    cudaErrCheck(cudaEventRecord(events_h[layer][i], stream_h[layer]));  
+                    cudaErrCheck(cudaEventRecord(events_h[layer][i], stream_h_this_layer));  
                 }
             }
         }
@@ -419,10 +502,15 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
     cudaErrCheck(cudaFree(x_in));
     if (TRAINING) cudaErrCheck(cudaFree(linearGates));
 
-    
-    for (int i = 0; i < numLayers; i++) {
-        if (stream_x[i] != NULL) cudaErrCheck(cudaStreamDestroy(stream_x[i]));
-        if (stream_h[i] != NULL) cudaErrCheck(cudaStreamDestroy(stream_h[i]));
+    if (USE_GEMM_STREAMS) {
+        cudaErrCheck(cudaStreamDestroy(stream_x_single));
+        cudaErrCheck(cudaStreamDestroy(stream_h_single));
+    }
+    else {
+        for (int i = 0; i < numLayers; i++) {
+            if (stream_x[i] != NULL) cudaErrCheck(cudaStreamDestroy(stream_x[i]));
+            if (stream_h[i] != NULL) cudaErrCheck(cudaStreamDestroy(stream_h[i]));
+        }
     }
 
     free(stream_x);
