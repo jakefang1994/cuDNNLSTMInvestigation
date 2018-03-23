@@ -154,9 +154,9 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
     int numElements = hiddenSize * miniBatch;
 
     // alloc device memory
-    float *h_data, *i_data, *c_data;
+    float *h_data, *x_data, *c_data;
     cudaErrCheck(cudaMalloc((void**)&h_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
-    cudaErrCheck(cudaMalloc((void**)&i_data, (seqLength) * (numLayers + 1) * numElements * sizeof(float)));
+    cudaErrCheck(cudaMalloc((void**)&x_data, (seqLength) * (numLayers + 1) * numElements * sizeof(float)));
     cudaErrCheck(cudaMalloc((void**)&c_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
     
     float *weight, *weight_T;
@@ -207,7 +207,7 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
     curandErrCheck(curandSetPseudoRandomGeneratorSeed(gen, 1782ULL));
     curandErrCheck(curandGenerateUniform(gen, h_data, (seqLength + 1) * (numLayers) * numElements));
     curandErrCheck(curandGenerateUniform(gen, c_data, (seqLength + 1) * (numLayers) * numElements));
-    curandErrCheck(curandGenerateUniform(gen, i_data, (seqLength) * (numLayers + 1) * numElements));
+    curandErrCheck(curandGenerateUniform(gen, x_data, (seqLength) * (numLayers + 1) * numElements));
     curandErrCheck(curandGenerateUniform(gen, weight, numLayers * hiddenSize * hiddenSize * 8));
     curandErrCheck(curandGenerateUniform(gen, bias, numLayers * hiddenSize * 8));
     curandErrCheck(curandDestroyGenerator(gen));
@@ -302,6 +302,20 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
             // x(t) *= [W_weight]
             if (GROUP_GEMM) {
                 // do optimization 1 here
+                cublasErrCheck(cublasSgemm(handle,
+                                    a_trans, b_trans,
+                                    4 * hiddenSize, // #rows of A and C
+                                    miniBatch * (tEnd - tStart), // #cols of B and C
+                                    hiddenSize, // #cols of A and B
+                                    &alpha,
+                                    &weight_T[layer * 8 * hiddenSize * hiddenSize], // A
+                                    a_trans == CUBLAS_OP_N ? 4 * hiddenSize : hiddenSize, // leading dimension of A, where we can try different data layout
+                                    x_data + tStart * numElements + layer * seqLength * numElements, // B
+                                    hiddenSize, // leading dimension of B, where we can try different data layout
+                                    &beta,
+                                    x_in + 4 * tStart * numElements, // C
+                                    4 * hiddenSize // leading dimension of C
+                                    )); 
             }
             else {
                 for (int igemm =0; igemm < 4; igemm++) {
@@ -313,7 +327,7 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
                                     &alpha,
                                     &weight_T[layer * 8 * hiddenSize * hiddenSize + igemm * hiddenSize], // A
                                     a_trans == CUBLAS_OP_N ? 4 * hiddenSize : hiddenSize, // leading dimension of A, where we can try different data layout
-                                    i_data + tStart * numElements + layer * seqLength * numElements, // B
+                                    x_data + tStart * numElements + layer * seqLength * numElements, // B
                                     hiddenSize, // leading dimension of B, where we can try different data layout
                                     &beta,
                                     x_in + 4 * tStart * numElements + igemm * hiddenSize, // C
@@ -333,6 +347,17 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
                 // h(t-1) *= [R_weight]
                 if (GROUP_GEMM) {
                      // do optimization 1 here
+                     cublasErrCheck(cublasSgemm(handle,
+                                        a_trans, b_trans,
+                                        4 * hiddenSize, miniBatch, hiddenSize,
+                                        &alpha,
+                                        &weight_T[4 * hiddenSize * hiddenSize + layer * 8 * hiddenSize * hiddenSize], 
+                                        a_trans == CUBLAS_OP_N ? 4 * hiddenSize : hiddenSize,
+                                        h_data + i * numElements + layer * (seqLength + 1) * numElements,
+                                        hiddenSize,
+                                        &beta,
+                                        h_in + 4 * layer * numElements, 
+                                        4 * hiddenSize));
                 }
                 else {
                     for (int igemm =0; igemm < 4; igemm++) {
@@ -382,7 +407,7 @@ float LSTMTest(int hiddenSize, int miniBatch, int seqLength, int numLayers, bool
 
     // free everything
     cudaErrCheck(cudaFree(h_data));
-    cudaErrCheck(cudaFree(i_data));  
+    cudaErrCheck(cudaFree(x_data));  
     cudaErrCheck(cudaFree(c_data));  
 
     if (weight != weight_T) cudaErrCheck(cudaFree(weight)); 
