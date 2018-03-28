@@ -10,6 +10,7 @@
 	extern "C" {
 #endif
 
+// TODO: may invoke THCudaCheck(cudaGetLastError());
 // Define some error checking macros.
 #define cudaErrCheck(stat) { cudaErrCheck_((stat), __FILE__, __LINE__); }
 void cudaErrCheck_(cudaError_t stat, const char *file, int line) {
@@ -82,14 +83,19 @@ __global__ void LSTM_unit_fused(int hiddenSize,
 }
 
 
-float forward(int hiddenSize, int miniBatch, int seqLength, int numLayers) {
+float forward(THCState* state,
+              THCudaTensor* h_data,
+              THCudaTensor* x_data,
+              THCudaTensor* c_data,
+              int hiddenSize, int miniBatch, int seqLength, int numLayers) {
+    
     int numElements = hiddenSize * miniBatch;
 
     // alloc device memory
-    float *h_data, *x_data, *c_data;
-    cudaErrCheck(cudaMalloc((void**)&h_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
-    cudaErrCheck(cudaMalloc((void**)&x_data, (seqLength) * (numLayers + 1) * numElements * sizeof(float)));
-    cudaErrCheck(cudaMalloc((void**)&c_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
+    // float *h_data, *x_data, *c_data;
+    // cudaErrCheck(cudaMalloc((void**)&h_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
+    // cudaErrCheck(cudaMalloc((void**)&x_data, (seqLength) * (numLayers + 1) * numElements * sizeof(float)));
+    // cudaErrCheck(cudaMalloc((void**)&c_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
 
     float *weight, *weight_T;
     cudaErrCheck(cudaMalloc((void**)&weight, numLayers * hiddenSize * hiddenSize * 8 * sizeof(float)));
@@ -131,9 +137,9 @@ float forward(int hiddenSize, int miniBatch, int seqLength, int numLayers) {
     curandGenerator_t gen;
     curandErrCheck(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
     curandErrCheck(curandSetPseudoRandomGeneratorSeed(gen, 1782ULL));
-    curandErrCheck(curandGenerateUniform(gen, h_data, (seqLength + 1) * (numLayers) * numElements));
-    curandErrCheck(curandGenerateUniform(gen, c_data, (seqLength + 1) * (numLayers) * numElements));
-    curandErrCheck(curandGenerateUniform(gen, x_data, (seqLength) * (numLayers + 1) * numElements));
+    // curandErrCheck(curandGenerateUniform(gen, h_data, (seqLength + 1) * (numLayers) * numElements));
+    // curandErrCheck(curandGenerateUniform(gen, c_data, (seqLength + 1) * (numLayers) * numElements));
+    // curandErrCheck(curandGenerateUniform(gen, x_data, (seqLength) * (numLayers + 1) * numElements));
     curandErrCheck(curandGenerateUniform(gen, weight, numLayers * hiddenSize * hiddenSize * 8));
     curandErrCheck(curandGenerateUniform(gen, bias, numLayers * hiddenSize * 8));
     curandErrCheck(curandDestroyGenerator(gen));
@@ -274,7 +280,7 @@ float forward(int hiddenSize, int miniBatch, int seqLength, int numLayers) {
                                     &alpha,
                                     &weight_T[layer * 8 * hiddenSize * hiddenSize], // A
                                     a_trans == CUBLAS_OP_N ? 4 * hiddenSize : hiddenSize, // leading dimension of A, where we can try different data layout
-                                    x_data + tStart * numElements + layer * seqLength * numElements, // B
+                                    THCudaTensor_data(state, x_data) + tStart * numElements + layer * seqLength * numElements, // B
                                     hiddenSize, // leading dimension of B, where we can try different data layout
                                     &beta,
                                     x_in + 4 * tStart * numElements, // C
@@ -297,7 +303,7 @@ float forward(int hiddenSize, int miniBatch, int seqLength, int numLayers) {
                                         &alpha,
                                         &weight_T[4 * hiddenSize * hiddenSize + layer * 8 * hiddenSize * hiddenSize],
                                         a_trans == CUBLAS_OP_N ? 4 * hiddenSize : hiddenSize,
-                                        h_data + i * numElements + layer * (seqLength + 1) * numElements,
+                                        THCudaTensor_data(state, h_data) + i * numElements + layer * (seqLength + 1) * numElements,
                                         hiddenSize,
                                         &beta,
                                         h_in + 4 * layer * numElements,
@@ -317,9 +323,9 @@ float forward(int hiddenSize, int miniBatch, int seqLength, int numLayers) {
                             x_in + 4 * i * numElements,
                             bias + 8 * layer * hiddenSize,
                             TRAINING ? linearGates + 4 * (i * numElements + layer * seqLength * numElements) : NULL,
-                            h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
-                            c_data + i * numElements + layer * (seqLength + 1) * numElements,
-                            c_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                            THCudaTensor_data(state, h_data) + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                            THCudaTensor_data(state, c_data) + i * numElements + layer * (seqLength + 1) * numElements,
+                            THCudaTensor_data(state, c_data) + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
                             TRAINING);
                 cudaErrCheck(cudaGetLastError());
 
@@ -338,9 +344,9 @@ float forward(int hiddenSize, int miniBatch, int seqLength, int numLayers) {
     cudaErrCheck(cudaDeviceSynchronize());
 
     // free everything
-    cudaErrCheck(cudaFree(h_data));
-    cudaErrCheck(cudaFree(x_data));
-    cudaErrCheck(cudaFree(c_data));
+    // cudaErrCheck(cudaFree(h_data));
+    // cudaErrCheck(cudaFree(x_data));
+    // cudaErrCheck(cudaFree(c_data));
 
     if (weight != weight_T) cudaErrCheck(cudaFree(weight));
     cudaErrCheck(cudaFree(weight_T));

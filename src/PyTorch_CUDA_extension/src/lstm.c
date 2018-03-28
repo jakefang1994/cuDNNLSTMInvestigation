@@ -3,6 +3,14 @@
 
 #include "lstm_kernel.h"
 
-float lstm_forward(int hiddenSize, int miniBatch, int seqLength, int numLayers) {
-    return forward(hiddenSize, miniBatch, seqLength, numLayers);
+extern THCState* state;
+
+float lstm_forward(
+    THCudaTensor* h_data,
+    THCudaTensor* x_data,
+    THCudaTensor* c_data,
+    int hiddenSize, int miniBatch, int seqLength, int numLayers) {
+
+    return forward(state, h_data, x_data, c_data, 
+                hiddenSize, miniBatch, seqLength, numLayers);
 }
