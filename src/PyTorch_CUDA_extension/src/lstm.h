@@ -1,4 +1,4 @@
-float lstm_forward(
+int lstm_forward(
               THCudaTensor* h_data,
               THCudaTensor* x_data,
               THCudaTensor* c_data,

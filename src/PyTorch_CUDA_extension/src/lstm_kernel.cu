@@ -83,7 +83,7 @@ __global__ void LSTM_unit_fused(int hiddenSize,
 }
 
 
-float forward(THCState* state,
+void forward(THCState* state,
               THCudaTensor* h_data,
               THCudaTensor* x_data,
               THCudaTensor* c_data,
@@ -149,13 +149,6 @@ float forward(THCState* state,
     cublasErrCheck(cublasCreate(&handle));
 
     cudaErrCheck(cudaDeviceSynchronize());
-
-    // start timing
-    float elapsedTime;
-    cudaEvent_t start, stop;
-    cudaErrCheck(cudaEventCreate(&start));
-    cudaErrCheck(cudaEventCreate(&stop));
-    cudaErrCheck(cudaEventRecord(start));
 
     // LSTM
 
@@ -337,12 +330,6 @@ float forward(THCState* state,
         }
     }
 
-    // stop timing
-    cudaErrCheck(cudaEventRecord(stop));
-    cudaErrCheck(cudaEventSynchronize(stop));
-    cudaErrCheck(cudaEventElapsedTime(&elapsedTime, start, stop));
-    cudaErrCheck(cudaDeviceSynchronize());
-
     // free everything
     // cudaErrCheck(cudaFree(h_data));
     // cudaErrCheck(cudaFree(x_data));
@@ -371,8 +358,6 @@ float forward(THCState* state,
     }
     free(events_x);
     free(events_h);
-
-    return elapsedTime;
 }
 
 #ifdef __cplusplus

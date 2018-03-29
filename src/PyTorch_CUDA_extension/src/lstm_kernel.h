@@ -2,7 +2,7 @@
 	extern "C" {
 #endif
 
-float forward(THCState* state,
+void forward(THCState* state,
               THCudaTensor* h_data,
               THCudaTensor* x_data,
               THCudaTensor* c_data,
