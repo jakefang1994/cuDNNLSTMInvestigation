@@ -84,19 +84,32 @@ __global__ void LSTM_unit_fused(int hiddenSize,
 
 
 void forward(THCState* state,
-              THCudaTensor* h_data,
-              THCudaTensor* x_data,
-              THCudaTensor* c_data,
+              THFloatTensor* h_data_cpu,
+              THFloatTensor* x_data_cpu,
+              THFloatTensor* c_data_cpu,
               int hiddenSize, int miniBatch, int seqLength, int numLayers) {
+
+	// start timing
+    float elapsedTime;
+    cudaEvent_t start, stop;
+    cudaErrCheck(cudaEventCreate(&start));
+    cudaErrCheck(cudaEventCreate(&stop));
+    cudaErrCheck(cudaEventRecord(start));
     
     int numElements = hiddenSize * miniBatch;
 
     // alloc device memory
-    // float *h_data, *x_data, *c_data;
-    // cudaErrCheck(cudaMalloc((void**)&h_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
-    // cudaErrCheck(cudaMalloc((void**)&x_data, (seqLength) * (numLayers + 1) * numElements * sizeof(float)));
-    // cudaErrCheck(cudaMalloc((void**)&c_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
+    float *h_data, *x_data, *c_data;
+    cudaErrCheck(cudaMalloc((void**)&h_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
+    cudaErrCheck(cudaMalloc((void**)&x_data, (seqLength) * (numLayers + 1) * numElements * sizeof(float)));
+    cudaErrCheck(cudaMalloc((void**)&c_data, (seqLength + 1) * (numLayers) * numElements * sizeof(float)));
 
+    // move from host to device
+    cudaErrCheck(cudaMemcpy(h_data, THFloatTensor_data(h_data_cpu), numLayers * numElements * sizeof(float), cudaMemcpyHostToDevice));
+    cudaErrCheck(cudaMemcpy(x_data, THFloatTensor_data(x_data_cpu), seqLength * numElements * sizeof(float), cudaMemcpyHostToDevice));
+    cudaErrCheck(cudaMemcpy(c_data, THFloatTensor_data(c_data_cpu), numLayers * numElements * sizeof(float), cudaMemcpyHostToDevice));
+
+    // continue alloc device memory
     float *weight, *weight_T;
     cudaErrCheck(cudaMalloc((void**)&weight, numLayers * hiddenSize * hiddenSize * 8 * sizeof(float)));
     cudaErrCheck(cudaMalloc((void**)&weight_T, numLayers * hiddenSize * hiddenSize * 8 * sizeof(float)));
@@ -273,7 +286,7 @@ void forward(THCState* state,
                                     &alpha,
                                     &weight_T[layer * 8 * hiddenSize * hiddenSize], // A
                                     a_trans == CUBLAS_OP_N ? 4 * hiddenSize : hiddenSize, // leading dimension of A, where we can try different data layout
-                                    THCudaTensor_data(state, x_data) + tStart * numElements + layer * seqLength * numElements, // B
+                                    x_data + tStart * numElements + layer * seqLength * numElements, // B
                                     hiddenSize, // leading dimension of B, where we can try different data layout
                                     &beta,
                                     x_in + 4 * tStart * numElements, // C
@@ -296,7 +309,7 @@ void forward(THCState* state,
                                         &alpha,
                                         &weight_T[4 * hiddenSize * hiddenSize + layer * 8 * hiddenSize * hiddenSize],
                                         a_trans == CUBLAS_OP_N ? 4 * hiddenSize : hiddenSize,
-                                        THCudaTensor_data(state, h_data) + i * numElements + layer * (seqLength + 1) * numElements,
+                                        h_data + i * numElements + layer * (seqLength + 1) * numElements,
                                         hiddenSize,
                                         &beta,
                                         h_in + 4 * layer * numElements,
@@ -316,11 +329,17 @@ void forward(THCState* state,
                             x_in + 4 * i * numElements,
                             bias + 8 * layer * hiddenSize,
                             TRAINING ? linearGates + 4 * (i * numElements + layer * seqLength * numElements) : NULL,
-                            THCudaTensor_data(state, h_data) + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
-                            THCudaTensor_data(state, c_data) + i * numElements + layer * (seqLength + 1) * numElements,
-                            THCudaTensor_data(state, c_data) + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                            h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                            c_data + i * numElements + layer * (seqLength + 1) * numElements,
+                            c_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
                             TRAINING);
                 cudaErrCheck(cudaGetLastError());
+
+                // memcpy h{layer - 1}(t) -> x{layer}(t)
+                cudaErrCheck(cudaMemcpy(x_data + i * numElements + (layer + 1) * seqLength * numElements, 
+                                        h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                                        numElements * sizeof(float),
+                                        cudaMemcpyDeviceToDevice));
 
                 if (layer != numLayers - 1) {
                     cudaErrCheck(cudaEventCreate(&events_h[layer][i], cudaEventDisableTiming));
@@ -329,6 +348,8 @@ void forward(THCState* state,
             }
         }
     }
+
+    // move from device to host (?)
 
     // free everything
     // cudaErrCheck(cudaFree(h_data));
@@ -358,6 +379,13 @@ void forward(THCState* state,
     }
     free(events_x);
     free(events_h);
+
+	// stop timing
+    cudaErrCheck(cudaEventRecord(stop));
+    cudaErrCheck(cudaEventSynchronize(stop));
+    cudaErrCheck(cudaEventElapsedTime(&elapsedTime, start, stop));
+    cudaErrCheck(cudaDeviceSynchronize());
+	printf("CUDA time:\t%f\n", elapsedTime / 1000);
 }
 
 #ifdef __cplusplus

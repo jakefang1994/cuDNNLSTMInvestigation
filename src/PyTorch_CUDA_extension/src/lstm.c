@@ -1,18 +1,27 @@
 #include <THC.h>
 #include <THCGeneral.h>
+#include <time.h>
 
 #include "lstm_kernel.h"
 
 extern THCState* state;
 
 int lstm_forward(
-    THCudaTensor* h_data,
-    THCudaTensor* x_data,
-    THCudaTensor* c_data,
+    THFloatTensor* h_data,
+    THFloatTensor* x_data,
+    THFloatTensor* c_data,
     int hiddenSize, int miniBatch, int seqLength, int numLayers) {
 
+	clock_t start,end;
+	float e_time;
+	start = clock();
+	
     forward(state, h_data, x_data, c_data, 
             hiddenSize, miniBatch, seqLength, numLayers);
+
+	end = clock();
+	e_time = ((float)(end - start)) / CLOCKS_PER_SEC;
+	printf("C wrapper time:\t%f\n", e_time);
 
     return 1;
 }

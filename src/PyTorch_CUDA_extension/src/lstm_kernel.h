@@ -3,9 +3,9 @@
 #endif
 
 void forward(THCState* state,
-              THCudaTensor* h_data,
-              THCudaTensor* x_data,
-              THCudaTensor* c_data,
+              THFloatTensor* h_data_cpu,
+              THFloatTensor* x_data_cpu,
+              THFloatTensor* c_data_cpu,
               int hiddenSize, int miniBatch, int seqLength, int numLayers);
 
 #ifdef __cplusplus

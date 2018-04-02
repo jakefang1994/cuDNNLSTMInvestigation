@@ -1,5 +1,5 @@
 int lstm_forward(
-              THCudaTensor* h_data,
-              THCudaTensor* x_data,
-              THCudaTensor* c_data,
+              THFloatTensor* h_data,
+              THFloatTensor* x_data,
+              THFloatTensor* c_data,
               int hiddenSize, int miniBatch, int seqLength, int numLayers);

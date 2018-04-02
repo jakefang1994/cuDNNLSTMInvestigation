@@ -19,6 +19,8 @@ else:
     print("Usage: python test.py <hiddenSize> <miniBatch> <seqLength> <numLayers>")
     raise NotImplementedError()
 
+print("hiddenSize %d, miniBatch %d, seqLength %d, numLayers %d"%(hidden_size, mini_batch, seq_length, num_layer))
+
 hidden_size_tensor = torch.autograd.Variable(torch.IntTensor([hidden_size]))
 mini_batch_tensor = torch.autograd.Variable(torch.IntTensor([mini_batch]))
 seq_length_tensor = torch.autograd.Variable(torch.IntTensor([seq_length]))
@@ -30,13 +32,21 @@ class Custom_Network(torch.nn.Module):
         super(Custom_Network, self).__init__()
 
     def forward(self, hiddenSize, miniBatch, seqLength, numLayers):
+        
+        start_t = time.time()
+        
         # random inputs
         num_elements = hidden_size * mini_batch
-        self.x_data = torch.randn(seq_length*(num_layer+1)*num_elements).cuda()
-        self.h_data = torch.randn((seq_length+1)*num_layer*num_elements).cuda()
-        self.c_data = torch.randn((seq_length+1)*num_layer*num_elements).cuda()
+        self.x_data = torch.randn(seq_length * num_elements)
+        self.h_data = torch.randn(num_layer * num_elements)
+        self.c_data = torch.randn(num_layer * num_elements)
+
+        # start_t = time.time()
 
         lstm().forward(self.h_data, self.x_data, self.c_data, hiddenSize, miniBatch, seqLength, numLayers)
+
+        elapsed_t = time.time() - start_t
+        print("Module wrapper time:\t%f seconds"%(elapsed_t))
         
 class Official_Network(torch.nn.Module):
     def __init__(self, hiddenSize, miniBatch, seqLength, numLayers):
@@ -59,6 +69,8 @@ start_time = time.time()
 net.forward(hidden_size, mini_batch, seq_length, num_layer)
 elapsed_time = time.time() - start_time
 print("Custom time:\t%f seconds"%(elapsed_time))
+
+print("----------------")
 
 net = Official_Network(hidden_size, mini_batch, seq_length, num_layer).cuda()
 start_time = time.time()
