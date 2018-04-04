@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <cublas_v2.h>
 #include <curand.h>
+#include <TH.h>
 #include <THC.h>
 #include <THCGeneral.h>
 
@@ -87,7 +88,10 @@ void forward(THCState* state,
               THFloatTensor* h_data_cpu,
               THFloatTensor* x_data_cpu,
               THFloatTensor* c_data_cpu,
-              int hiddenSize, int miniBatch, int seqLength, int numLayers) {
+              THIntTensor* _hiddenSize, 
+              THIntTensor* _miniBatch, 
+              THIntTensor* _seqLength, 
+              THIntTensor* _numLayers) {
 
 	// start timing
     float elapsedTime;
@@ -96,6 +100,10 @@ void forward(THCState* state,
     cudaErrCheck(cudaEventCreate(&stop));
     cudaErrCheck(cudaEventRecord(start));
     
+    int hiddenSize = THIntTensor_data(_hiddenSize)[0];
+    int miniBatch = THIntTensor_data(_miniBatch)[0];
+    int seqLength = THIntTensor_data(_seqLength)[0];
+    int numLayers = THIntTensor_data(_numLayers)[0];
     int numElements = hiddenSize * miniBatch;
 
     // alloc device memory

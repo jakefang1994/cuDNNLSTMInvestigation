@@ -1,3 +1,4 @@
+#include <TH.h>
 #include <THC.h>
 #include <THCGeneral.h>
 #include <time.h>
@@ -10,7 +11,10 @@ int lstm_forward(
     THFloatTensor* h_data,
     THFloatTensor* x_data,
     THFloatTensor* c_data,
-    int hiddenSize, int miniBatch, int seqLength, int numLayers) {
+    THIntTensor* hiddenSize, 
+    THIntTensor* miniBatch, 
+    THIntTensor* seqLength, 
+    THIntTensor* numLayers) {
 
 	clock_t start,end;
 	float e_time;
