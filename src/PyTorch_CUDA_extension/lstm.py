@@ -17,3 +17,6 @@ class lstm(torch.autograd.Function):
 
         elapsed_time = time.time() - start_t
         print("Function wrapper time:\t%f seconds"%(elapsed_time))
+
+        # be forced to return a Tensor by autograd.Function
+        return h_data
