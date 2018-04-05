@@ -8,24 +8,24 @@
 extern THCState* state;
 
 int lstm_forward(
-    THFloatTensor* h_data,
     THFloatTensor* x_data,
-    THFloatTensor* c_data,
+    THFloatTensor* weight,
+    THFloatTensor* bias,
     THIntTensor* hiddenSize, 
     THIntTensor* miniBatch, 
     THIntTensor* seqLength, 
     THIntTensor* numLayers) {
 
-	clock_t start,end;
-	float e_time;
-	start = clock();
+	// clock_t start,end;
+	// float e_time;
+	// start = clock();
 	
-    forward(state, h_data, x_data, c_data, 
+    forward(state, x_data, weight, bias, 
             hiddenSize, miniBatch, seqLength, numLayers);
 
-	end = clock();
-	e_time = ((float)(end - start)) / CLOCKS_PER_SEC;
-	printf("C wrapper time:\t%f\n", e_time);
+	// end = clock();
+	// e_time = ((float)(end - start)) / CLOCKS_PER_SEC;
+	// printf("C wrapper time:\t%f\n", e_time);
 
     return 1;
 }

@@ -1,7 +1,7 @@
 int lstm_forward(
-              THFloatTensor* h_data,
               THFloatTensor* x_data,
-              THFloatTensor* c_data,
+              THFloatTensor* weight,
+              THFloatTensor* bias,
               THIntTensor* hiddenSize, 
               THIntTensor* miniBatch, 
               THIntTensor* seqLength, 
