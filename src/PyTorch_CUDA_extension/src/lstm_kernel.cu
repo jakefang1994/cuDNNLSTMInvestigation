@@ -40,11 +40,16 @@ __forceinline__ __device__ float sigmoidf(float in) {
     return 1.f / (1.f + expf(-in));
 }
 
+__global__ void set_ones(float * arr, int len) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if(index >= len) return;
+    arr[index] = 1.;
+}
 
 __global__ void LSTM_unit_fused(int hiddenSize,
                                 int miniBatch,
-                                float * __restrict__ h_in,
-                                float * __restrict__ x_in,
+                                float * __restrict__ h_in, // (miniBatch, 4 * hiddenSize)
+                                float * __restrict__ x_in, // (miniBatch, 4 * hiddenSize)
                                 float * __restrict__ bias,
                                 float * __restrict__ linearGates,
                                 float * __restrict__ h_out,
@@ -90,20 +95,18 @@ void forward(THCState* state,
             //   THFloatTensor* c_data_cpu, // numLayers * miniBatch * hiddenSize
               THFloatTensor* weight_cpu,
               THFloatTensor* bias_cpu,
-              THIntTensor* _hiddenSize, 
-              THIntTensor* _miniBatch, 
-              THIntTensor* _seqLength, 
+              THIntTensor* _hiddenSize,
+              THIntTensor* _miniBatch,
+              THIntTensor* _seqLength,
               THIntTensor* _numLayers) {
-// for(int ij; ij < 10; ij++){
-//     printf("%f\n", THFloatTensor_data(weight_cpu)[ij]);
-// }
+
 	// // start timing
     // float elapsedTime;
     // cudaEvent_t start, stop;
     // cudaErrCheck(cudaEventCreate(&start));
     // cudaErrCheck(cudaEventCreate(&stop));
     // cudaErrCheck(cudaEventRecord(start));
-    
+
     int hiddenSize = THIntTensor_data(_hiddenSize)[0];
     int miniBatch = THIntTensor_data(_miniBatch)[0];
     int seqLength = THIntTensor_data(_seqLength)[0];
@@ -130,6 +133,21 @@ void forward(THCState* state,
     // cudaErrCheck(cudaMemcpy(c_data, THFloatTensor_data(c_data_cpu), numLayers * numElements * sizeof(float), cudaMemcpyHostToDevice));
     cudaErrCheck(cudaMemcpy(weight, THFloatTensor_data(weight_cpu), numLayers * hiddenSize * hiddenSize * 8 * sizeof(float), cudaMemcpyHostToDevice));
     cudaErrCheck(cudaMemcpy(bias, THFloatTensor_data(bias_cpu), numLayers * hiddenSize * 8 * sizeof(float), cudaMemcpyHostToDevice));
+
+    // verify x - correct
+    // for(int qq = 0; qq < seqLength; qq++) {
+    //     printf("time: %d\n", qq);
+    //     float* temp = (float*)malloc(numElements * sizeof(float));
+    //     cudaErrCheck(cudaMemcpy(temp,
+    //                 x_data + qq * numElements,
+    //                 numElements * sizeof(float),
+    //                 cudaMemcpyDeviceToHost));
+    //     for(int pp = 0; pp < numElements; pp++){
+    //         printf("%f  ", temp[pp]);
+    //     }
+    //     printf("\n\n");
+    //     free(temp);
+    // }
 
     float *h_in, *x_in;
     cudaErrCheck(cudaMalloc((void**)&h_in, 4 * numLayers * numElements * sizeof(float)));
@@ -173,6 +191,27 @@ void forward(THCState* state,
     // curandErrCheck(curandGenerateUniform(gen, bias, numLayers * hiddenSize * 8));
     curandErrCheck(curandDestroyGenerator(gen));
 
+    dim3 blockDim, gridDim;
+    blockDim.x = 256;
+    gridDim.x = ((numLayers) * (seqLength + 1) * numElements + blockDim.x - 1) / blockDim.x;
+    // set_ones<<<gridDim,blockDim>>>(c_data, (numLayers) * (seqLength + 1) * numElements);
+    // set_ones<<<gridDim,blockDim>>>(h_data, (numLayers) * (seqLength + 1) * numElements);
+
+    // verify initialization - cudaMemset can only initialize zeros
+    // for(int qq = 0; qq < seqLength + 1; qq++) {
+    //     printf("time: %d\n", qq);
+    //     float* temp = (float*)malloc(numElements * sizeof(float));
+    //     cudaErrCheck(cudaMemcpy(temp,
+    //                 h_data + qq * numElements,
+    //                 numElements * sizeof(float),
+    //                 cudaMemcpyDeviceToHost));
+    //     for(int pp = 0; pp < numElements; pp++){
+    //         printf("%f  ", temp[pp]);
+    //     }
+    //     printf("\n\n");
+    //     free(temp);
+    // }
+
     // create cuBLAS handle.
     cublasHandle_t handle;
     cublasErrCheck(cublasCreate(&handle));
@@ -181,14 +220,16 @@ void forward(THCState* state,
 
     // LSTM
 
-    const cublasOperation_t a_trans = CUBLAS_OP_N; // always N
-    const cublasOperation_t b_trans = (seqLength > 1) ? CUBLAS_OP_N : CUBLAS_OP_T;
+		const cublasOperation_t a_trans = CUBLAS_OP_N;
+		// const cublasOperation_t a_trans = CUBLAS_OP_T; // verify mannually transpose - gives same result as Sgeam auto transpose
+    const cublasOperation_t b_trans = CUBLAS_OP_N; // always N
 
     // cublasSgemm(): C = alpha * (A + B) + beta * C
     float alpha = 1.f;
     float beta  = 0.f;
 
     if (b_trans == CUBLAS_OP_N) {
+        // printf("MANNUALY TRANSPOSE\n");
         // do optimization 4 here, transpose A
         for (int layer = 0; layer <numLayers; layer++) {
 
@@ -198,39 +239,40 @@ void forward(THCState* state,
 
             // for h(t-1)
             float *R_weight_in = weight + layer * hiddenSize * hiddenSize * 8 + hiddenSize * hiddenSize * 4;
-            float *R_weight_out = weight_T + layer *hiddenSize * hiddenSize * 8 + hiddenSize * hiddenSize * 4;
+            float *R_weight_out = weight_T + layer * hiddenSize * hiddenSize * 8 + hiddenSize * hiddenSize * 4;
 
             // transposed weights: hiddenSize * (4 * hiddenSize)
             cublasErrCheck(cublasSetStream(handle, stream_x[layer]));
-            cublasErrCheck(cublasSgeam(handle, CUBLAS_OP_T, // trans A
+						cublasErrCheck(cublasSgeam(handle, CUBLAS_OP_T, // trans A
                                         CUBLAS_OP_N, // trans B
-                                        hiddenSize, // #rows in A & C
-                                        4 * hiddenSize, // #cols in B & C
+                                        4 * hiddenSize, // #rows in A & C
+                                        hiddenSize, // #cols in B & C
                                         &alpha, // scale A
                                         W_weight_in, // A
-                                        4 * hiddenSize, // leading dim in A
+                                        hiddenSize, // leading dim in A
                                         &beta, // scale B
                                         NULL, // B
-                                        hiddenSize, // leading dim in B
+                                        4 * hiddenSize, // leading dim in B
                                         W_weight_out, // C
-                                        hiddenSize)); // leading dim in C
+                                        4 * hiddenSize)); // leading dim in C
 
             cublasErrCheck(cublasSetStream(handle, stream_h[layer]));
-            cublasErrCheck(cublasSgeam(handle, CUBLAS_OP_T, // trans A
+						cublasErrCheck(cublasSgeam(handle, CUBLAS_OP_T, // trans A
                                         CUBLAS_OP_N, // trans B
-                                        hiddenSize, // #rows in A & C
-                                        4 * hiddenSize, // #cols in B & C
+                                        4 * hiddenSize, // #rows in A & C
+                                        hiddenSize, // #cols in B & C
                                         &alpha, // scale A
                                         R_weight_in, // A
-                                        4 * hiddenSize, // leading dim in A
+                                        hiddenSize, // leading dim in A
                                         &beta, // scale B
                                         NULL, // B
-                                        hiddenSize, // leading dim in B
+                                        4 * hiddenSize, // leading dim in B
                                         R_weight_out, // C
-                                        hiddenSize)); // leading dim in C
+                                        4 * hiddenSize)); // leading dim in C
         }
     }
     else {
+        // printf("NO TRANSPOSE\n");
         weight_T = weight;
     }
 
@@ -295,19 +337,20 @@ void forward(THCState* state,
             }
 
             // x(t) = x(t) * [W_weight]
-            cublasErrCheck(cublasSgemm(handle,
+            // (miniBatch, 4 * hiddenSize) TODO: transpose
+						cublasErrCheck(cublasSgemm(handle,
                                     a_trans, b_trans,
-                                    miniBatch * (tEnd - tStart), // #rows of A and C
-                                    4 * hiddenSize, // #cols of B and C
-                                    hiddenSize, // #cols of A and rows of B
+                                    4 * hiddenSize, // #rows of A and C
+                                    miniBatch * (tEnd - tStart), // #cols of B and C
+                                    hiddenSize, // #cols of A and B
                                     &alpha,
-                                    x_data + tStart * numElements + layer * seqLength * numElements, // A: x
-                                    miniBatch * (tEnd - tStart), // leading dimension of A, where we can try different data layout
-                                    &weight_T[layer * 8 * hiddenSize * hiddenSize], // B: W
-                                    b_trans == CUBLAS_OP_N ? hiddenSize : 4 * hiddenSize, // leading dimension of B, where we can try different data layout
+                                    &weight_T[layer * 8 * hiddenSize * hiddenSize], // A
+                                    a_trans == CUBLAS_OP_N ? 4 * hiddenSize : hiddenSize, // leading dimension of A, where we can try different data layout
+                                    x_data + tStart * numElements + layer * seqLength * numElements, // B
+                                    hiddenSize, // leading dimension of B, where we can try different data layout
                                     &beta,
                                     x_in + 4 * tStart * numElements, // C
-                                    miniBatch * (tEnd - tStart) // leading dimension of C
+                                    4 * hiddenSize // leading dimension of C
                                     ));
 
             for (int i = tStart; i < tEnd; i++) {
@@ -316,26 +359,71 @@ void forward(THCState* state,
             }
 
             for (int i = tStart; i < tEnd; i++) {
+
+                // verify input h - correctly locate output h from last time step
+                // if(i == 0) {
+                //     printf("VERIFY h\n");
+                //     float* temp = (float*)malloc(numElements * sizeof(float));
+                //     cudaErrCheck(cudaMemcpy(temp,
+                //                 h_data + i * numElements + layer * (seqLength + 1) * numElements,
+                //                 numElements * sizeof(float),
+                //                 cudaMemcpyDeviceToHost));
+                //     for(int pp = 0; pp < numElements; pp++){
+                //         printf("%f  ", temp[pp]);
+                //     }
+                //     printf("\n\n");
+                //     free(temp);
+                // }
+
+                // verify R weight
+                // if(i == 0) {
+                //     printf("VERIFY R\n");
+                //     float* temp = (float*)malloc(hiddenSize * 4 * hiddenSize * sizeof(float));
+                //     cudaErrCheck(cudaMemcpy(temp,
+                //                 weight_T + 4 * hiddenSize * hiddenSize + layer * 8 * hiddenSize * hiddenSize,
+                //                 hiddenSize * 4 * hiddenSize * sizeof(float),
+                //                 cudaMemcpyDeviceToHost));
+                //     for(int pp = 0; pp < hiddenSize * 4 * hiddenSize; pp++){
+                //         printf("%f  ", temp[pp]);
+                //     }
+                //     printf("\n\n");
+                //     free(temp);
+                // }
+
                 // do h(t-1) *= [R_weight] on stream_h[layer]
                 cublasErrCheck(cublasSetStream(handle, stream_h[layer]));
 
                 // h(t-1) = h(t-1) * [R_weight]
-                cublasErrCheck(cublasSgemm(handle,
+                // (miniBatch, 4 * hiddenSize) TODO: transpose
+								cublasErrCheck(cublasSgemm(handle,
                                         a_trans, b_trans,
-                                        miniBatch, 
-                                        4 * hiddenSize, 
-                                        hiddenSize,
+                                        4 * hiddenSize, miniBatch, hiddenSize,
                                         &alpha,
-                                        h_data + i * numElements + layer * (seqLength + 1) * numElements, // A: h
-                                        miniBatch,
-                                        &weight_T[4 * hiddenSize * hiddenSize + layer * 8 * hiddenSize * hiddenSize], // B: R
-                                        b_trans == CUBLAS_OP_N ? hiddenSize : 4 * hiddenSize,
+                                        &weight_T[4 * hiddenSize * hiddenSize + layer * 8 * hiddenSize * hiddenSize],
+                                        a_trans == CUBLAS_OP_N ? 4 * hiddenSize : hiddenSize,
+                                        h_data + i * numElements + layer * (seqLength + 1) * numElements,
+                                        hiddenSize,
                                         &beta,
                                         h_in + 4 * layer * numElements,
-                                        miniBatch));
+                                        4 * hiddenSize));
 
                 cudaErrCheck(cudaStreamWaitEvent(stream_h[layer], events_x[layer][i], 0));
                 cudaErrCheck(cudaEventDestroy(events_x[layer][i]));
+
+                // verify h * R
+                // if(i == 0) {
+                //     printf("VERIFY h * R\n");
+                //     float* temp = (float*)malloc(4 * numElements * sizeof(float));
+                //     cudaErrCheck(cudaMemcpy(temp,
+                //                 h_in + 4 * layer * numElements,
+                //                 4 * numElements * sizeof(float),
+                //                 cudaMemcpyDeviceToHost));
+                //     for(int pp = 0; pp < 4 * numElements; pp++){
+                //         printf("%f  ", temp[pp]);
+                //     }
+                //     printf("\n\n");
+                //     free(temp);
+                // }
 
                 dim3 blockDim, gridDim;
 
@@ -354,8 +442,8 @@ void forward(THCState* state,
                             TRAINING);
                 cudaErrCheck(cudaGetLastError());
 
-                // memcpy h{layer - 1}(t) -> x{layer}(t)
-                cudaErrCheck(cudaMemcpy(x_data + i * numElements + (layer + 1) * seqLength * numElements, 
+                // memcpy h{layer}(t) -> x{layer + 1}(t)
+                cudaErrCheck(cudaMemcpy(x_data + i * numElements + (layer + 1) * seqLength * numElements,
                                         h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
                                         numElements * sizeof(float),
                                         cudaMemcpyDeviceToDevice));
@@ -364,15 +452,27 @@ void forward(THCState* state,
                     cudaErrCheck(cudaEventCreate(&events_h[layer][i], cudaEventDisableTiming));
                     cudaErrCheck(cudaEventRecord(events_h[layer][i], stream_h[layer]));
                 }
+                // verify output h - h(1) correct
+                // if(i == 1) {
+                //     float* temp = (float*)malloc(numElements * sizeof(float));
+                //     cudaErrCheck(cudaMemcpy(temp,
+                //                 h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                //                 numElements * sizeof(float),
+                //                 cudaMemcpyDeviceToHost));
+                //     for(int pp = 0; pp < numElements; pp++){
+                //         printf("%f  ", temp[pp]);
+                //     }
+                //     printf("\n\n");
+                //     free(temp);
+                // }
             }
         }
     }
 
-    // copy back the last hidden State to h_data_cpu[0:numElements]
-    // h_data: numLayers * (seqLength + 1) * miniBatch * hiddenSize
-    cudaErrCheck(cudaMemcpy(THFloatTensor_data(x_data_cpu), 
-                            h_data + (numLayers) * (seqLength + 1) * numElements - numElements, 
-                            numElements * sizeof(float), 
+    // copy back the last hidden State to x_data_cpu[0:numElements]
+    cudaErrCheck(cudaMemcpy(THFloatTensor_data(x_data_cpu),
+                            h_data + (numLayers) * (seqLength + 1) * numElements - numElements,
+                            numElements * sizeof(float),
                             cudaMemcpyDeviceToHost));
 
     // free everything

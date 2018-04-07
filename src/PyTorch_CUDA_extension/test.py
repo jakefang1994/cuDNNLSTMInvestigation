@@ -36,26 +36,26 @@ input_size = hidden_size
 num_classes = 10
 # MNIST Dataset
 test_dataset = dsets.MNIST(root='./data/',
-                           train=False, 
+                           train=False,
                            transform=transforms.ToTensor(),
                            download=True)
 # Data Loader (Input Pipeline)
 test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
-                                          batch_size=mini_batch, 
+                                          batch_size=mini_batch,
                                           shuffle=False)
 
 #-------- load parameters --------
 dict = torch.load("rnn.pkl")
 # torch.Size([2, 2, 112, 28])
-weight = torch.cat((torch.cat((dict["lstm.weight_ih_l0"].unsqueeze(0).unsqueeze(0), 
-                                dict["lstm.weight_hh_l0"].unsqueeze(0).unsqueeze(0)), 1), 
-                                torch.cat((dict["lstm.weight_ih_l1"].unsqueeze(0).unsqueeze(0), 
-                                dict["lstm.weight_hh_l1"].unsqueeze(0).unsqueeze(0)), 1)),0)
+weight = torch.cat((torch.cat((dict["lstm.weight_ih_l0"].unsqueeze(0).unsqueeze(0),
+                               dict["lstm.weight_hh_l0"].unsqueeze(0).unsqueeze(0)), 1),
+                    torch.cat((dict["lstm.weight_ih_l1"].unsqueeze(0).unsqueeze(0),
+                               dict["lstm.weight_hh_l1"].unsqueeze(0).unsqueeze(0)), 1)),0)
 weight_1d = torch.autograd.Variable(np.reshape(weight, (-1))) # torch.Size([12544])
 # torch.Size([2, 2, 112])
-bias = torch.cat((torch.cat((dict["lstm.bias_ih_l0"].unsqueeze(0).unsqueeze(0), 
-                             dict["lstm.bias_hh_l0"].unsqueeze(0).unsqueeze(0)), 1), 
-                  torch.cat((dict["lstm.bias_ih_l1"].unsqueeze(0).unsqueeze(0), 
+bias = torch.cat((torch.cat((dict["lstm.bias_ih_l0"].unsqueeze(0).unsqueeze(0),
+                             dict["lstm.bias_hh_l0"].unsqueeze(0).unsqueeze(0)), 1),
+                  torch.cat((dict["lstm.bias_ih_l1"].unsqueeze(0).unsqueeze(0),
                              dict["lstm.bias_hh_l1"].unsqueeze(0).unsqueeze(0)), 1)),0)
 bias_1d = torch.autograd.Variable(np.reshape(bias, (-1))) # torch.Size([448])
 
@@ -66,7 +66,7 @@ class Custom_Network(torch.nn.Module):
         self.fc = torch.nn.Linear(hidden_size, num_classes)
 
     def forward(self, x_data, weight, bias, hiddenSize, miniBatch, seqLength, numLayers):
-        
+
         # start_t = time.time()
 
         out = lstm()(x_data, weight, bias, hiddenSize, miniBatch, seqLength, numLayers)
@@ -75,11 +75,12 @@ class Custom_Network(torch.nn.Module):
         # print("Module wrapper time:\t%f seconds"%(elapsed_t))
 
         out = out.view(mini_batch, hidden_size).cuda()
+        # print(out)
         out = self.fc(out)
         # print(np.shape(out))
 
         return out
-        
+
 class Official_Network(torch.nn.Module):
     def __init__(self, hiddenSize, miniBatch, seqLength, numLayers):
         super(Official_Network, self).__init__()
@@ -91,54 +92,64 @@ class Official_Network(torch.nn.Module):
         self.fc = torch.nn.Linear(hidden_size, num_classes)
 
     def forward(self, x):
+        # print(x[0])
         self.h_data = torch.autograd.Variable(torch.zeros(self.numLayers, self.miniBatch, self.hiddenSize).cuda())
         self.c_data = torch.autograd.Variable(torch.zeros(self.numLayers, self.miniBatch, self.hiddenSize).cuda())
 
         out, _ = self.lstm(x, (self.h_data, self.c_data)) # out: seqLength * miniBatch * hiddenSize
+        # print(out[1])
         out = self.fc(out[-1, :, :])
         return out
 
-
-net = Custom_Network().cuda()
-net_dict = net.state_dict()
+print("Custom LSTM:")
+c_net = Custom_Network().cuda()
+net_dict = c_net.state_dict()
 pretrained_dict = {k: v for k, v in dict.items() if k in net_dict}
 net_dict.update(pretrained_dict)
-net.load_state_dict(pretrained_dict)
+c_net.load_state_dict(pretrained_dict)
 
-# start_time = time.time()
 correct = 0
 total = 0
+elapsed_time = 0
 for images, labels in test_loader:
+    start_time = time.time()
     images = images.numpy().reshape([mini_batch, seq_length, input_size]).transpose(1, 0, 2)
     images = images.reshape(-1)
     images = torch.autograd.Variable(torch.from_numpy(images))
-    
-    outputs = net(images, weight_1d, bias_1d, hidden_size_tensor, mini_batch_tensor, seq_length_tensor, num_layer_tensor)
+
+    outputs = c_net(images, weight_1d, bias_1d, hidden_size_tensor, mini_batch_tensor, seq_length_tensor, num_layer_tensor)
     # print(outputs)
 
     _, predicted = torch.max(outputs.data, 1)
     total += labels.size(0)
     correct += (predicted.cpu() == labels).sum()
+    end_time = time.time()
+    # print(end_time - start_time)
+    elapsed_time += end_time - start_time
+    # print("Custom time:\t%f seconds"%(elapsed_time))
 print('Test Accuracy of the model on the 10000 test images: %d %%' % (100 * correct / total))
+print("Average time: %f" % (elapsed_time / (10000 / mini_batch)))
 
-# elapsed_time = time.time() - start_time
-# print("Custom time:\t%f seconds"%(elapsed_time))
 
 print("----------------")
-
-net = Official_Network(hidden_size, mini_batch, seq_length, num_layer).cuda()
-# start_time = time.time()
-net.load_state_dict(dict)
+print("Official LSTM:")
+o_net = Official_Network(hidden_size, mini_batch, seq_length, num_layer).cuda()
+o_net.load_state_dict(dict)
 correct = 0
 total = 0
+elapsed_time = 0
 for images, labels in test_loader:
+    start_time = time.time()
     images = images.numpy().reshape([mini_batch, seq_length, input_size]).transpose(1, 0, 2)
     images = torch.autograd.Variable(torch.from_numpy(images)).cuda()
 
-    outputs = net(images)
+    outputs = o_net(images)
     _, predicted = torch.max(outputs.data, 1)
     total += labels.size(0)
     correct += (predicted.cpu() == labels).sum()
-print('Test Accuracy of the model on the 10000 test images: %d %%' % (100 * correct / total)) 
-# elapsed_time = time.time() - start_time
-# print("Official time:\t%f seconds"%(elapsed_time))
+    end_time = time.time()
+    # print(end_time - start_time)
+    elapsed_time += end_time - start_time
+    # print("Official time:\t%f seconds"%(elapsed_time))
+print('Test Accuracy of the model on the 10000 test images: %d %%' % (100 * correct / total))
+print("Average time: %f" % (elapsed_time / (10000 / mini_batch)))
