@@ -1,12 +1,5 @@
 # PyTorch_CUDA_extension
 
-### Build
-```bash install.bash```
-### Test
-```python test.py```
-
----
-
 #### Change from official PyTorch model to custom model in Python
 
 - Replace model (torch.nn.Module) and corresponding calling API

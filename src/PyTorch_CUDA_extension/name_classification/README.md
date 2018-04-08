@@ -2,8 +2,10 @@
 
 ### Build
 ```bash install.bash```
-### Test official and custom model
-```python test.py```
+### Test official model
+```python official_lstm.py```
+### Test custom model
+```python custom_lstm.py```
 
 ---
 
