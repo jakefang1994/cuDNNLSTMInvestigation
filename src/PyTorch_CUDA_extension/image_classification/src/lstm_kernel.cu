@@ -53,6 +53,7 @@ __global__ void LSTM_unit_fused(int hiddenSize,
                                 float * __restrict__ bias,
                                 float * __restrict__ linearGates,
                                 float * __restrict__ h_out,
+                                float * __restrict__ x_out,
                                 float * __restrict__ c_in,
                                 float * __restrict__ c_out,
                                 bool training) {
@@ -86,6 +87,7 @@ __global__ void LSTM_unit_fused(int hiddenSize,
     value = out_gate * tanhf(value);
 
     h_out[index] = value;
+    x_out[index] = value;
 }
 
 
@@ -220,15 +222,15 @@ void forward(THCState* state,
 
     // LSTM
 
-		const cublasOperation_t a_trans = CUBLAS_OP_N;
-		// const cublasOperation_t a_trans = CUBLAS_OP_T; // verify mannually transpose - gives same result as Sgeam auto transpose
+    // const cublasOperation_t a_trans = CUBLAS_OP_N;
+    const cublasOperation_t a_trans = CUBLAS_OP_T; // do not do optimization 4
     const cublasOperation_t b_trans = CUBLAS_OP_N; // always N
 
     // cublasSgemm(): C = alpha * (A + B) + beta * C
     float alpha = 1.f;
     float beta  = 0.f;
 
-    if (b_trans == CUBLAS_OP_N) {
+    if (a_trans == CUBLAS_OP_N) {
         // printf("MANNUALY TRANSPOSE\n");
         // do optimization 4 here, transpose A
         for (int layer = 0; layer <numLayers; layer++) {
@@ -280,7 +282,7 @@ void forward(THCState* state,
     int lEnd = 0;   // layer ends at
     int tStart = 0; // timestep starts from
     int tEnd = 0;   // timestep ends at
-    int recurBatchSize = 1; // optimization 5 will make it 2
+    int recurBatchSize = 4; // optimization 5 will make it 2
 
     while (true) {
         // Many layer "scheduling".
@@ -437,16 +439,11 @@ void forward(THCState* state,
                             bias + 8 * layer * hiddenSize,
                             TRAINING ? linearGates + 4 * (i * numElements + layer * seqLength * numElements) : NULL,
                             h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
+                            x_data + i * numElements + (layer + 1) * seqLength * numElements,
                             c_data + i * numElements + layer * (seqLength + 1) * numElements,
                             c_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
                             TRAINING);
                 cudaErrCheck(cudaGetLastError());
-
-                // memcpy h{layer}(t) -> x{layer + 1}(t)
-                cudaErrCheck(cudaMemcpy(x_data + i * numElements + (layer + 1) * seqLength * numElements,
-                                        h_data + (i + 1) * numElements + layer * (seqLength + 1) * numElements,
-                                        numElements * sizeof(float),
-                                        cudaMemcpyDeviceToDevice));
 
                 if (layer != numLayers - 1) {
                     cudaErrCheck(cudaEventCreate(&events_h[layer][i], cudaEventDisableTiming));

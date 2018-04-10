@@ -18,7 +18,7 @@ elif len(argv) == 1:
     hidden_size = 28
     mini_batch = 100
     seq_length = 28
-    num_layer = 2
+    num_layer = 7
 else:
     print("Usage: python test.py <hiddenSize> <miniBatch> <seqLength> <numLayers>")
     raise NotImplementedError()
@@ -40,9 +40,12 @@ test_dataset = dsets.MNIST(root='./data/',
                            transform=transforms.ToTensor(),
                            download=True)
 # Data Loader (Input Pipeline)
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+test_loader_c = torch.utils.data.DataLoader(dataset=test_dataset,
                                           batch_size=mini_batch,
                                           shuffle=False)
+test_loader_o = torch.utils.data.DataLoader(dataset=test_dataset,
+                                          batch_size=mini_batch,
+                                          shuffle=True)
 
 #-------- load parameters --------
 dict = torch.load("rnn.pkl")
@@ -50,13 +53,35 @@ dict = torch.load("rnn.pkl")
 weight = torch.cat((torch.cat((dict["lstm.weight_ih_l0"].unsqueeze(0).unsqueeze(0),
                                dict["lstm.weight_hh_l0"].unsqueeze(0).unsqueeze(0)), 1),
                     torch.cat((dict["lstm.weight_ih_l1"].unsqueeze(0).unsqueeze(0),
-                               dict["lstm.weight_hh_l1"].unsqueeze(0).unsqueeze(0)), 1)),0)
+                               dict["lstm.weight_hh_l1"].unsqueeze(0).unsqueeze(0)), 1),
+                    torch.cat((dict["lstm.weight_ih_l2"].unsqueeze(0).unsqueeze(0),
+                               dict["lstm.weight_hh_l2"].unsqueeze(0).unsqueeze(0)), 1),
+                    torch.cat((dict["lstm.weight_ih_l3"].unsqueeze(0).unsqueeze(0),
+                               dict["lstm.weight_hh_l3"].unsqueeze(0).unsqueeze(0)), 1),
+                    torch.cat((dict["lstm.weight_ih_l4"].unsqueeze(0).unsqueeze(0),
+                               dict["lstm.weight_hh_l4"].unsqueeze(0).unsqueeze(0)), 1),
+                    torch.cat((dict["lstm.weight_ih_l5"].unsqueeze(0).unsqueeze(0),
+                               dict["lstm.weight_hh_l5"].unsqueeze(0).unsqueeze(0)), 1),
+                    torch.cat((dict["lstm.weight_ih_l6"].unsqueeze(0).unsqueeze(0),
+                               dict["lstm.weight_hh_l6"].unsqueeze(0).unsqueeze(0)), 1)
+                    ),0)
 weight_1d = torch.autograd.Variable(np.reshape(weight, (-1))) # torch.Size([12544])
 # torch.Size([2, 2, 112])
 bias = torch.cat((torch.cat((dict["lstm.bias_ih_l0"].unsqueeze(0).unsqueeze(0),
                              dict["lstm.bias_hh_l0"].unsqueeze(0).unsqueeze(0)), 1),
                   torch.cat((dict["lstm.bias_ih_l1"].unsqueeze(0).unsqueeze(0),
-                             dict["lstm.bias_hh_l1"].unsqueeze(0).unsqueeze(0)), 1)),0)
+                             dict["lstm.bias_hh_l1"].unsqueeze(0).unsqueeze(0)), 1),
+                  torch.cat((dict["lstm.bias_ih_l2"].unsqueeze(0).unsqueeze(0),
+                             dict["lstm.bias_hh_l2"].unsqueeze(0).unsqueeze(0)), 1),
+                  torch.cat((dict["lstm.bias_ih_l3"].unsqueeze(0).unsqueeze(0),
+                             dict["lstm.bias_hh_l3"].unsqueeze(0).unsqueeze(0)), 1),
+                  torch.cat((dict["lstm.bias_ih_l4"].unsqueeze(0).unsqueeze(0),
+                             dict["lstm.bias_hh_l4"].unsqueeze(0).unsqueeze(0)), 1),
+                  torch.cat((dict["lstm.bias_ih_l5"].unsqueeze(0).unsqueeze(0),
+                             dict["lstm.bias_hh_l5"].unsqueeze(0).unsqueeze(0)), 1),
+                  torch.cat((dict["lstm.bias_ih_l6"].unsqueeze(0).unsqueeze(0),
+                             dict["lstm.bias_hh_l6"].unsqueeze(0).unsqueeze(0)), 1)
+                  ),0)
 bias_1d = torch.autograd.Variable(np.reshape(bias, (-1))) # torch.Size([448])
 
 #-------- models --------
@@ -108,10 +133,14 @@ pretrained_dict = {k: v for k, v in dict.items() if k in net_dict}
 net_dict.update(pretrained_dict)
 c_net.load_state_dict(pretrained_dict)
 
+num_test_point = 6000
+
 correct = 0
 total = 0
 elapsed_time = 0
-for images, labels in test_loader:
+for i, (images, labels) in enumerate(test_loader_c):
+    if i == num_test_point / mini_batch:
+        break
     start_time = time.time()
     images = images.numpy().reshape([mini_batch, seq_length, input_size]).transpose(1, 0, 2)
     images = images.reshape(-1)
@@ -124,11 +153,12 @@ for images, labels in test_loader:
     total += labels.size(0)
     correct += (predicted.cpu() == labels).sum()
     end_time = time.time()
-    # print(end_time - start_time)
-    elapsed_time += end_time - start_time
+    if i != 0:
+        # print(end_time - start_time)
+        elapsed_time += end_time - start_time
     # print("Custom time:\t%f seconds"%(elapsed_time))
-print('Test Accuracy of the model on the 10000 test images: %d %%' % (100 * correct / total))
-print("Average time: %f" % (elapsed_time / (10000 / mini_batch)))
+print('Test Accuracy of the model on the %d test images: %.2f %%' % (num_test_point, 100 * correct / total))
+print("Average Inference time: %f" % (elapsed_time / (num_test_point / mini_batch)))
 
 
 print("----------------")
@@ -138,7 +168,9 @@ o_net.load_state_dict(dict)
 correct = 0
 total = 0
 elapsed_time = 0
-for images, labels in test_loader:
+for i, (images, labels) in enumerate(test_loader_o):
+    if i == num_test_point / mini_batch:
+        break
     start_time = time.time()
     images = images.numpy().reshape([mini_batch, seq_length, input_size]).transpose(1, 0, 2)
     images = torch.autograd.Variable(torch.from_numpy(images)).cuda()
@@ -151,5 +183,5 @@ for images, labels in test_loader:
     # print(end_time - start_time)
     elapsed_time += end_time - start_time
     # print("Official time:\t%f seconds"%(elapsed_time))
-print('Test Accuracy of the model on the 10000 test images: %d %%' % (100 * correct / total))
-print("Average time: %f" % (elapsed_time / (10000 / mini_batch)))
+print('Test Accuracy of the model on the %d test images: %.2f %%' % (num_test_point, 100 * correct / total))
+print("Average Inference time: %f" % (elapsed_time / (num_test_point / mini_batch)))
