@@ -226,7 +226,7 @@ if __name__ == "__main__":
         # category_i = all_categories.index(category)
         # confusion[category_i][guess_i] += 1
 
-    print("Average time: %f" % (elapsed_time / 10000))
+    print("Average inference time: %f" % (elapsed_time / 10000))
 
     # Normalize by dividing every row by its sum
     for i in range(num_classes):
