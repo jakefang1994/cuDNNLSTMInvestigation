@@ -1,0 +1,180 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+% \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading nips_2017
+%
+% to avoid loading the natbib package, add option 
+% \usepackage[nonatbib]{nips_2017}
+
+\usepackage[square,numbers]{natbib}
+\bibliographystyle{unsrtnat}
+
+\usepackage{nips_2017}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+% \usepackage[final]{nips_2017}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{graphicx}
+\usepackage{mathtools}
+
+\title{Investigation of Long Short-Term Memory Networks Implementation in cuDNN}
+
+% The \author macro works with any number of authors. There are two
+% commands used to separate the names and addresses of multiple
+% authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to
+% break the lines. Using \AND forces a line break at that point. So,
+% if LaTeX puts 3 of 4 authors names on the first line, and the last
+% on the second line, try using \AND instead of \And before the third
+% author name.
+
+\author{
+  Li Gu \\
+  University of Toronto \\
+  Toronto, Canada \\
+  \texttt{li.gu@mail.utoronto.ca} \\
+  \And
+  Shuo Niu \\
+  University of Toronto \\
+  Toronto, Canada \\
+  \texttt{shuo.niu@mail.utoronto.ca} \\
+  \And
+  Yang Fang \\
+  University of Toronto \\
+  Toronto, Canada \\
+  \texttt{jake.fang@mail.utoronto.ca} \\
+  %% examples of more authors
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \AND
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+}
+
+\begin{document}
+% \nipsfinalcopy is no longer used
+
+\maketitle
+\begin{abstract}
+  In this project, we are going to implement long short-term memory networks in CUDA 
+  and investigate both the computation efficiency and memory efficiency of the networks.
+\end{abstract}
+
+\section{Introduction}
+
+%%%%%%  Background %%%%%%%%
+
+Recurrent Neural Networks (RNNs) are the state-of-art approaches for a large number of sequence tasks, including sequence generation\cite{eck2002first,sutskever2014sequence,gravessupervised}, machine translation \cite{cho2014learning,jean2015montreal,luong2015effective}, speech recognition \cite{graves2013speech}. LSTM \cite{hochreiter1997long}, an special RNN architecture, can avoid the issue of exploding or vanishing gradient \cite{pascanu2013difficulty} in deeper network and thus be more capable of learning long-term dependencies. A key factor in these recent success has come from the GPUs acceleration \cite{leonard2015rnn,weninger2015introducing} and Nvidia introduces cuDNN library\cite{chetlur2014cudnn} with highly-optimized implementation of RNNs\cite{appleyard2016optimizing} 
+
+%%%%% Method in Brief 
+In this project, we learnt GPU programming and optimization techniques in CUDA, and tried to get familiar with several mainstream GPU-accelerated library in deep learning, including cuDNN and Torch. The whole project includes three parts:
+
+% Furthemore, we hope to come up with some strategies to further maximize memory throughput for above existing libraries. 
+
+\begin{itemize}
+  \item First, we implemented naive LSTM on CPU and GPU. We analyzed the sequential process of LSTM on CPU and discovered the acceleration provided by pointwise operations on GPU.
+  \item Second, we worked on optimizations on GPU level, which further accelerated the naive GPU implementation, expanded bandwidth usage, and increased floating-point throughput. 
+  \item Third, we integrated our LSTM CUDA code into PyTorch framework, and compared its performance with PyTorch default CUDA LSTM on application level.
+\end{itemize}
+
+%%%%% Evaluation %%%%%%
+
+% To evaluate different optimization strategies, we will have experiments on two different levels: On CUDA level, our implemented optimization strategies will be evaluated with DeepBench\cite{DeepBench}; On application level, we will integrated our custom cuda-LSTM library into Pytorch and evaluate training and inference time in some sequence-to-sequence tasks, such as Neural Machine Translation\cite{luong2015effective}.
+
+
+% Nvidia introduces the highly optimized cuDNN library\cite{chetlur2014cudnn} in 2014 and brought the support for Simple RNN, GRU, and LSTM architectures in the release of the fifth version in 2016. We would like to implement their unveiled approaches to accelerate a standard LSTM networks and search for the general portable efficient methods for accelerating different forms of RNNs architectures which would be beneficial when implementing and deploying a newly invented RNNs architecture on different GPUs. After investigation of the computation efficiency, we would turn into the memory efficiency of the network which has been significantly overlooked.
+
+\section{Related work}
+
+Recurrent neural networks (RNN) address the problem of recognizing patterns in sequences of data, in the way of looping the same neural network for each sequential input. Inputs along the time sequence relate to each other via multiplication, therefore, derivatives of previous inputs are susceptible to become zero (called vanishing gradient) or infinity (called exploding gradient) in a long input sequence. 
+
+Long Short Term Memory (LSTM)\cite{hochreiter1997long} networks are a special kind of RNN to address the problem of exploding or vanishing gradient when learning long-term dependencies. LSTM cells pass a hidden state in sequence and use four neural network layers to decides what information to be forgotten from, added in, or output from the hidden state.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{rnn}
+\caption{An unrolled recurrent neural network\cite{understandLSTM}}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{lstm}
+\caption{The repeating module in an LSTM contains four interacting layers\cite{understandLSTM}}
+\end{figure}
+
+Steps of updating hidden state and calculating output in an LSTM cell:
+\begin{equation}
+  \begin{split}
+    & f_t=\sigma(W_f\cdot [h_{t-1},x_t]+b_f) \\
+    & i_t=\sigma(W_i\cdot [h_{t-1},x_t]+b_i) \\
+    & \widetilde{C}_t=\tanh(W_C\cdot [h_{t-1},x_t]+b_C) \\
+    & C_t=f_t * C_{t-1}+i_t * \widetilde{C}_t \\
+    & o_t=\sigma(W_o\cdot [h_{t-1},x_t]+b_o \\
+    & h_t=o_t * \tanh(C_t) \\
+  \end{split}
+\end{equation}
+
+
+%%%%% Speed Up %%%%%%%%%%%%%%%%%%%
+
+%% summary of cudnn5
+The optimization of LSTM can be implemented on two levels: CUDA level and algorithm level. cuDNN\cite{chetlur2014cudnn} is the first library of efficient implementations of deep learning primitives which is easy to integrate into existing frameworks and provides optimized performance and memory usage. Three stages of optimization of LSTM on CUDA level was incorporated into cuDNN 5, which achieves an order of magnitude speedup by exposing parallelism between operations.
+
+%% summary on application level 
+On algorithm level, exploring alternative architectures to sequence tasks for reducing temporal dependencies and taking the advantage of the parallelism on GPUs have received significant attention recently\cite{chang2017dilated, kaiser2016can, kaiser2015neural, gehring2016convolutional, gehring2017convolutional, kalchbrenner2016neural}. 
+\cite{Balduzzi:2016:SRN:3045390.3045527} proposed a recurrent unit with only element-wise linear recurrence relations, which can achieve similar performance to standard non-linear RNNs on text generation.
+\cite{bradbury2016quasi} Quasi-RNN has incorporated word-level convolutions into recurrent unit with sequential gated pooling. 
+In SRU\cite{lei2017training}, the majority of computation for each step is independent of the recurrence and thus can be easily parallelized, which makes its training as fast as a convolutional layer and 5-10x faster than an optimized LSTM implementation. 
+\cite{martin2017parallelizing}abstracts above parallel linear recurrence algorithms and provides an implementation as a CUDA kernel.
+
+
+%%%%%% Memory usage %%%%%%%%%%%%%%%%%
+% \textbf{Reduce Memory Consumption} \\
+ The trend for deep learning model is to have a “deeper and wider” architecture, which brings the gap between limited GPU device memory capacity and increasing model complexity. Thus, memory optimization becomes a more popular topic in deep learning community. In\cite{chen2015mxnet}, by analysing the data dependencies between operations in a network and allocating the same memory to operations in a network that do not use it concurrently, the memory can be reused.  \cite{gruslys2016memory} exploits dynamic programming to balance a trade-off between caching of intermediate results and recomputation in RNN. On cuda level, \cite{diamos2016persistent} applies the on-chip memory on the GPU to cache the shared RNN parameters during training and optimized barrier implementation On assembly level to reduce the cost of inter-processor synchronization and hide latency, which obtains 16x reduction in memory of activations. \cite{mengtraining} utilizes host memory as a bigger memory pool to overcome the limitation of GPU memory and further proposes a memory-efficient additive attention layer\cite{bahdanau2014neural} for sequence tasks. However, the optimization of memory efficiency, especially how to maximize memory throughput is overlooked. 
+
+ %%%% Our job
+ %The second part in our project is closely related to recent work about optimization memory efficiency on CNN\cite{li2016optimizing}. As the first study to look into the memory efficiency of accelerating CNN on GPUs, they firstly unveiled the impact of data layouts on different types of CNN layers and compare their performance among Alex’s cuda-convnet, Caffe and cuDNN. Then, they investigate the internal memory access patterns of the memory-bound layers (pooling and softmax layers) and propose effective optimizations to substantially reduce their off-chip memory requests and internal-kernel communication. Inspired by this work, our project will investigate the memory efficiency of accelerating RNN on GPUs
+
+%%%%% Benchmark
+%Baidu DeepBench\cite{DeepBench} is one benchmark that we can use to evaluate our CUDA code on operation-level, particularly dense matrix multiplies, convolutions, and RNN. The metrics it uses are computation time and TeraFLOPS. 
+%PyTorch\cite{PyTorch} is a deep learning framework initially released in October 2016, which provides strong GPU acceleration for tensor computation. 
+%By employing DeepBench, we will benchmarking our CUDA code against underlying neural network libraries such as cuDNN, and CUDA-Torch, in metrics of time and TFLOPS.
+
+\section{CPU implementation}
+
+\section{GPU implementation and optimization}
+
+\section{Applications}
+
+
+\medskip
+
+
+\bibliography{references}
+
+\end{document}
